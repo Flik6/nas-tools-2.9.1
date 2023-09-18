@@ -32,7 +32,7 @@ jobs:
 
       -
         name: Set Up Buildx
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@v3.0.0
 
       -
         name: Login DockerHub
