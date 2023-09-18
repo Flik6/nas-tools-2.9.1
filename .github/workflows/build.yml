@@ -26,7 +26,9 @@ jobs:
           app_version=$(cat version.py |sed -ne "s/APP_VERSION\s=\s'v\(.*\)'/\1/gp")
           echo "app_version=$app_version" >> $GITHUB_ENV
           which curl
-
+      -
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
       -
         name: Set Up Buildx
         uses: docker/setup-buildx-action@v3
