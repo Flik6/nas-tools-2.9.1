@@ -11,13 +11,13 @@ on:
       - .github/workflows/build.yml
       - requirements.txt
 jobs:
-  build:
+  buildx:
     runs-on: ubuntu-latest
     name: Build Docker Image
     steps:
       -
         name: Checkout
-        uses: actions/checkout@master
+        uses: actions/checkout@v4
 
       -
         name: Release version
