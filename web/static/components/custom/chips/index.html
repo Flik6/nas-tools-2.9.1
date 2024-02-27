@@ -42,9 +42,10 @@
             break;
           case "title":
             data_dict.title = (!data_dict.tmdbid) ? "未匹配TMDB" : data_dict.title;
+            href = data_dict.tmdblink;
             break;
         }
-        console.log("正在新增chips: ", key, data_dict[key], href);
+        // console.log("正在新增chips: ", key, data_dict[key], href);
         this.render(key, data_dict[key], href, flag);
         this.style.display = "block";
       }
@@ -53,7 +54,7 @@
     render(chips_type, chips_content, chips_href, chips_flag) {
       // 支持的标题
       const title = {
-        org_string: "识别用名",
+        rev_string: "识别用名",
         ignored_words: "应用屏蔽词",
         replaced_words: "应用替换词",
         offset_words: "应用集数偏移",
@@ -71,10 +72,11 @@
         video_codec:"视频编码",
         audio_codec:"音频编码",
         team:"制作组/字幕组",
+        customization:"自定义占位符",
       }
       // 所对应样式
       const color = {
-        org_string: "badge-outline text-wrap text-orange",
+        rev_string: "badge-outline text-wrap text-orange",
         ignored_words: "badge-outline text-wrap text-cyan",
         replaced_words: "badge-outline text-wrap text-cyan",
         offset_words: "badge-outline text-wrap text-cyan",
@@ -92,6 +94,7 @@
         video_codec:"",
         audio_codec:"",
         team:"bg-cyan text-wrap",
+        customization:"",
       }
       if (chips_content && chips_type && title.hasOwnProperty(chips_type)) {
         if (chips_content.length && chips_flag) {
@@ -105,7 +108,7 @@
             label_element.appendChild(span_element);
           } else {
             for (let custom_word of chips_content) {
-            let child_element = document.createElement("span");
+            let child_element = document.createElement(chips_type === "ignored_words" ? "del": "span");
             child_element.setAttribute("class", `badge me-1 ${color[chips_type]}`);
             child_element.innerHTML = custom_word;
             label_element.appendChild(child_element);

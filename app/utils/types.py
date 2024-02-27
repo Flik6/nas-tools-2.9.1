@@ -1,5 +1,9 @@
 from enum import Enum
 
+class MyMediaLibraryType(Enum):
+    MINE = '我的媒体库'
+    WATCHING = '正在观看'
+    NEWESTADD = '最新入库'
 
 class MediaType(Enum):
     TV = '电视剧'
@@ -11,9 +15,10 @@ class MediaType(Enum):
 class DownloaderType(Enum):
     QB = 'Qbittorrent'
     TR = 'Transmission'
-    Client115 = '115网盘'
-    Aria2 = 'Aria2'
-    PikPak = 'PikPak'
+    UT = 'uTorrent'
+    PAN115 = '115网盘'
+    ARIA2 = 'Aria2'
+    PIKPAK = 'PikPak'
 
 
 class SyncType(Enum):
@@ -32,6 +37,7 @@ class SearchType(Enum):
     API = "第三方API请求"
     SLACK = "Slack"
     SYNOLOGY = "Synology Chat"
+    PLUGIN = "插件"
 
 
 class RmtMode(Enum):
@@ -59,9 +65,9 @@ class OsType(Enum):
 
 
 class IndexerType(Enum):
+    BUILTIN = "Indexer"
     JACKETT = "Jackett"
     PROWLARR = "Prowlarr"
-    BUILTIN = "Indexer"
 
 
 class MediaServerType(Enum):
@@ -95,5 +101,106 @@ class SiteSchema(Enum):
     TNode = "TNode"
 
 
-MovieTypes = ['MOV', '电影']
-TvTypes = ['TV', '电视剧']
+# 可监听事件
+class EventType(Enum):
+    # Emby Webhook通知
+    EmbyWebhook = "emby.webhook"
+    # Jellyfin Webhook通知
+    JellyfinWebhook = "jellyfin.webhook"
+    # Plex Webhook通知
+    PlexWebhook = "plex.webhook"
+    # 新增下载
+    DownloadAdd = "download.add"
+    # 下载失败
+    DownloadFail = "download.fail"
+    # 入库完成
+    TransferFinished = "transfer.finished"
+    # 入库失败
+    TransferFail = "transfer.fail"
+    # 下载字幕
+    SubtitleDownload = "subtitle.download"
+    # 新增订阅
+    SubscribeAdd = "subscribe.add"
+    # 订阅完成
+    SubscribeFinished = "subscribe.finished"
+    # 交互消息
+    MessageIncoming = "message.incoming"
+    # 开始搜索
+    SearchStart = "search.start"
+    # 源文件被删除
+    SourceFileDeleted = "sourcefile.deleted"
+    # 媒件库文件被删除
+    LibraryFileDeleted = "libraryfile.deleted"
+    # 刮削媒体信息
+    MediaScrapStart = "media.scrap.start"
+    # 插件重载
+    PluginReload = "plugin.reload"
+    # 豆瓣想看同步
+    DoubanSync = "douban.sync"
+    # 馒头助手
+    MTeamHelper = "mteamhelper.start"
+    # 辅种任务开始
+    AutoSeedStart = "autoseed.start"
+    # 刷新媒体库
+    RefreshMediaServer = "refresh.mediaserver"
+    # 站点签到
+    SiteSignin = "site.signin"
+
+
+# 系统配置Key字典
+class SystemConfigKey(Enum):
+    # 同步媒体库范围
+    SyncLibrary = "SyncLibrary"
+    # 媒体库显示模块
+    LibraryDisplayModule = "LibraryDisplayModule"
+    # 站点Cookie获取参数
+    CookieUserInfo = "CookieUserInfo"
+    # CookieCloud同步参数
+    CookieCloud = "CookieCloud"
+    # 自定义JS/CSS
+    CustomScript = "CustomScript"
+    # 用户认证参数
+    UserSiteAuthParams = "UserSiteAuthParams"
+    # 默认下载器
+    DefaultDownloader = "DefaultDownloader"
+    # 默认下载设置
+    DefaultDownloadSetting = "DefaultDownloadSetting"
+    # 默认电影订阅设置
+    DefaultRssSettingMOV = "DefaultRssSettingMOV"
+    # 默认电视剧订阅设置
+    DefaultRssSettingTV = "DefaultRssSettingTV"
+    # 用户已安装的插件
+    UserInstalledPlugins = "UserInstalledPlugins"
+    # 已安装插件汇报状态
+    UserInstalledPluginsReport = "UserInstalledPluginsReport"
+    # 括削配置
+    UserScraperConf = "UserScraperConf"
+    # 索引站点
+    UserIndexerSites = "UserIndexerSites"
+
+# 处理进度Key字典
+class ProgressKey(Enum):
+    # 搜索
+    Search = "search"
+    # 转移
+    FileTransfer = "filetransfer"
+    # 媒体库同步
+    MediaSync = "mediasync"
+    # 站点Cookie获取
+    SiteCookie = "sitecookie"
+
+
+class RssType(Enum):
+    # 手动
+    Manual = "manual"
+    # 自动
+    Auto = "auto"
+
+
+# 电影类型关键字
+MovieTypes = ['MOV', '电影', MediaType.MOVIE]
+# 电视剧类型关键字
+TvTypes = ['TV', '电视剧', MediaType.TV]
+
+# 内置索引器文件md5值
+BuiltinIndexerFileMd5 = "6b828f14ae2a4bf165f1f9c91b87825f"

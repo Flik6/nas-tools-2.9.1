@@ -3,15 +3,17 @@ import datetime
 import hashlib
 import random
 import re
+import os
 from urllib import parse
 
+import cn2an
 import dateparser
 import dateutil.parser
+import zhconv
 
-import cn2an
 from app.utils.exception_utils import ExceptionUtils
 from app.utils.types import MediaType
-
+from config import Config
 
 class StringUtils:
 
@@ -107,7 +109,31 @@ class StringUtils:
             else:
                 return False
         return True
+    @staticmethod
+    def is_eng_media_name_format(word):
+        pattern = r'^[a-zA-Z]+[a-zA-Z0-9\s._:@!@]*$'
+        return bool(re.match(pattern, word))
 
+    @staticmethod
+    def is_int_or_float(word):
+        """
+        判断是否是整型或浮点型的格式
+        """
+        if not word:
+            return None
+        pattern = r'^[-+]?\d+(\.\d+)?$'
+        return re.match(pattern, word) is not None
+
+    @staticmethod
+    def is_string_and_not_empty(word):
+        """
+        判断是否是字符串并且字符串是否为空
+        """
+        if isinstance(word, str) and word.strip():
+            return True
+        else:
+            return False
+            
     @staticmethod
     def xstr(s):
         """
@@ -130,6 +156,8 @@ class StringUtils:
         :return:
         """
         int_val = 0
+        if not text:
+            return int_val
         try:
             int_val = int(text.strip().replace(',', ''))
         except Exception as e:
@@ -145,8 +173,14 @@ class StringUtils:
         :return:
         """
         float_val = 0.0
+        if not text:
+            return 0.0
         try:
-            float_val = float(text.strip().replace(',', ''))
+            text = text.strip().replace(',', '')
+            if text:
+                float_val = float(text)
+            else:
+                float_val = 0.0
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
         return float_val
@@ -177,8 +211,8 @@ class StringUtils:
         """
         将字节计算为文件大小描述（带单位的格式化后返回）
         """
-        if not size:
-            return size
+        if size is None:
+            return ""
         size = re.sub(r"\s|B|iB", "", str(size), re.I)
         if size.replace(".", "").isdigit():
             try:
@@ -239,23 +273,59 @@ class StringUtils:
         return ""
 
     @staticmethod
+    def get_url_sld(url):
+        """
+        获取URL的二级域名部分，不含端口，若为IP则返回IP
+        """
+        if not url:
+            return ""
+        _, netloc = StringUtils.get_url_netloc(url)
+        if not netloc:
+            return ""
+        netloc = netloc.split(":")[0].split(".")
+        if len(netloc) >= 2:
+            return netloc[-2]
+        return netloc[0]
+
+    @staticmethod
     def get_base_url(url):
         """
         获取URL根地址
         """
+        if not url:
+            return ""
         scheme, netloc = StringUtils.get_url_netloc(url)
         return f"{scheme}://{netloc}"
 
     @staticmethod
     def clear_file_name(name):
+        """
+        去除文件中的特殊字符
+        """
         if not name:
             return None
-        return re.sub(r"[*?\\/\"<>~]", "", name, flags=re.IGNORECASE).replace(":", "：")
+
+        replacement_dict = {
+            r"[*?\\/\"<>~|,，？]": "",
+            r"[\s]+": " ",
+        }
+
+        cleaned_name = name
+        for pattern, replacement in replacement_dict.items():
+            cleaned_name = re.sub(pattern, replacement, cleaned_name, flags=re.IGNORECASE).strip()
+
+        media = Config().get_config('media')
+        filename_prefer_barre = media.get("filename_prefer_barre", False) or False
+        if filename_prefer_barre:
+            cleaned_name = cleaned_name.replace(":", " - ").replace("：", " - ")
+        else:
+            cleaned_name = cleaned_name.replace(":", "：")
+        return cleaned_name
 
     @staticmethod
     def get_keyword_from_string(content):
         """
-        从检索关键字中拆分中年份、季、集、类型
+        从搜索关键字中拆分中年份、季、集、类型
         """
         if not content:
             return None, None, None, None, None
@@ -273,7 +343,7 @@ class StringUtils:
         if season_re:
             mtype = MediaType.TV
             season_num = int(cn2an.cn2an(season_re.group(1), mode='smart'))
-        episode_re = re.search(r"第\s*([0-9一二三四五六七八九十]+)\s*集", content, re.IGNORECASE)
+        episode_re = re.search(r"第\s*([0-9一二三四五六七八九十百零]+)\s*集", content, re.IGNORECASE)
         if episode_re:
             mtype = MediaType.TV
             episode_num = int(cn2an.cn2an(episode_re.group(1), mode='smart'))
@@ -283,7 +353,7 @@ class StringUtils:
         if year_re:
             year = year_re.group(1)
         key_word = re.sub(
-            r'第\s*[0-9一二三四五六七八九十]+\s*季|第\s*[0-9一二三四五六七八九十]+\s*集|[\s(]+(\d{4})[\s)]*', '',
+            r'第\s*[0-9一二三四五六七八九十]+\s*季|第\s*[0-9一二三四五六七八九十百零]+\s*集|[\s(]+(\d{4})[\s)]*', '',
             content,
             flags=re.IGNORECASE).strip()
         if key_word:
@@ -346,8 +416,10 @@ class StringUtils:
         :param date_format:
         :return:
         """
+        if isinstance(timestamp, str) and not timestamp.isdigit():
+            return timestamp
         try:
-            return datetime.datetime.fromtimestamp(timestamp).strftime(date_format)
+            return datetime.datetime.fromtimestamp(int(timestamp)).strftime(date_format)
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
             return timestamp
@@ -416,6 +488,30 @@ class StringUtils:
         return hashlib.md5(str(data).encode()).hexdigest()
 
     @staticmethod
+    def md5_hash_file(file_path):
+        """
+        MD5 HASH 指定文件
+        """
+        if not os.path.exists(file_path):
+            return ""
+        md5_hash = hashlib.md5()
+        with open(file_path, "rb") as file:
+            while chunk := file.read(8192):
+                md5_hash.update(chunk)
+        return md5_hash.hexdigest()
+
+    @staticmethod
+    def verify_integrity(file_path, original_md5):
+        """
+        校验文件是否匹配指定的md5
+        """
+        md5 = StringUtils.md5_hash_file(file_path)
+        if not StringUtils.is_string_and_not_empty(md5) or \
+        not StringUtils.is_string_and_not_empty(original_md5):
+            return True
+        return md5 == original_md5
+
+    @staticmethod
     def str_timehours(minutes):
         """
         将分钟转换成小时和分钟
@@ -426,7 +522,10 @@ class StringUtils:
             return ""
         hours = minutes // 60
         minutes = minutes % 60
-        return "%s小时%s分" % (hours, minutes)
+        if hours:
+            return "%s小时%s分" % (hours, minutes)
+        else:
+            return "%s分钟" % minutes
 
     @staticmethod
     def str_amount(amount, curr="$"):
@@ -436,3 +535,110 @@ class StringUtils:
         if not amount:
             return "0"
         return curr + format(amount, ",")
+
+    @staticmethod
+    def count_words(s):
+        """
+        计算字符串中包含的单词数量，只适用于简单的单行文本
+        :param s: 要计算的字符串
+        :return: 字符串中包含的单词数量
+        """
+        # 匹配英文单词
+        if re.match(r'^[A-Za-z0-9\s]+$', s):
+            # 如果是英文字符串，则按空格分隔单词，并计算单词数量
+            num_words = len(s.split())
+        else:
+            # 如果不是英文字符串，则计算字符数量
+            num_words = len(s)
+
+        return num_words
+
+    @staticmethod
+    def split_text(text, max_length):
+        """
+        把文本拆分为固定字节长度的数组，优先按换行拆分，避免单词内拆分
+        """
+        if not text:
+            yield ''
+        # 分行
+        lines = re.split('\n', text)
+        buf = ''
+        for line in lines:
+            if len(line.encode('utf-8')) > max_length:
+                # 超长行继续拆分
+                blank = ""
+                if re.match(r'^[A-Za-z0-9.\s]+', line):
+                    # 英文行按空格拆分
+                    parts = line.split()
+                    blank = " "
+                else:
+                    # 中文行按字符拆分
+                    parts = line
+                part = ''
+                for p in parts:
+                    if len((part + p).encode('utf-8')) > max_length:
+                        # 超长则Yield
+                        yield (buf + part).strip()
+                        buf = ''
+                        part = f"{blank}{p}"
+                    else:
+                        part = f"{part}{blank}{p}"
+                if part:
+                    # 将最后的部分追加到buf
+                    buf += part
+            else:
+                if len((buf + "\n" + line).encode('utf-8')) > max_length:
+                    # buf超长则Yield
+                    yield buf.strip()
+                    buf = line
+                else:
+                    # 短行直接追加到buf
+                    if buf:
+                        buf = f"{buf}\n{line}"
+                    else:
+                        buf = line
+        if buf:
+            # 处理文本末尾剩余部分
+            yield buf.strip()
+
+    @staticmethod
+    def is_one_month_ago(date_str):
+        """
+        判断日期是否早于一个月前
+        """
+        if not date_str:
+            return False
+        # 将日期字符串解析为日期对象
+        date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
+        # 计算当前日期和一个月前的日期
+        today = datetime.datetime.today()
+        one_month_ago = today - datetime.timedelta(days=30)
+        # 比较日期对象，判断是否早于一个月前
+        if date_obj < one_month_ago:
+            return True
+        else:
+            return False
+
+    @staticmethod
+    def is_chinese_word(string: str, mode: int = 1):
+        """
+        判断是否包含中文
+        :param string 需要判断的字符
+        :param mode 模式 1匹配简体和繁体 2只匹配简体 3只匹配繁体
+        :return True or False
+        """
+        for ch in string:
+            if mode == 1:
+                if "\u4e00" <= ch <= "\u9FFF":
+                    return True
+            elif mode == 2:
+                if "\u4e00" <= ch <= "\u9FFF":
+                    if zhconv.convert(ch, "zh-cn") == ch:
+                        return True
+            elif mode == 3:
+                if "\u4e00" <= ch <= "\u9FFF":
+                    if zhconv.convert(ch, "zh-cn") != ch:
+                        return True
+        if re.search(pattern="^[0-9]+$", string=string):
+            return True
+        return False

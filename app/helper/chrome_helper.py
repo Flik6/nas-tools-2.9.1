@@ -1,14 +1,17 @@
 import json
 import os.path
 import tempfile
-import time
 from functools import reduce
 from threading import Lock
 
+import requests
 import undetected_chromedriver as uc
 from webdriver_manager.chrome import ChromeDriverManager
 
-from app.utils import SystemUtils, RequestUtils
+import log
+import app.helper.cloudflare_helper as CloudflareHelper
+from app.utils import SystemUtils, RequestUtils, ExceptionUtils
+from config import Config
 
 lock = Lock()
 
@@ -21,11 +24,13 @@ class ChromeHelper(object):
     _chrome = None
     _headless = False
 
+    _proxy = None
+
     def __init__(self, headless=False):
 
         self._executable_path = SystemUtils.get_webdriver_path() or driver_executable_path
 
-        if SystemUtils.is_windows():
+        if SystemUtils.is_windows() or SystemUtils.is_macos():
             self._headless = False
         elif not os.environ.get("NASTOOL_DISPLAY"):
             self._headless = True
@@ -38,7 +43,12 @@ class ChromeHelper(object):
         if not uc.find_chrome_executable():
             return
         global driver_executable_path
-        driver_executable_path = ChromeDriverManager().install()
+        try:
+            download_webdriver_path = ChromeDriverManager().install()
+            SystemUtils.chmod755(download_webdriver_path)
+            driver_executable_path = download_webdriver_path
+        except Exception as err:
+             ExceptionUtils.exception_traceback(err)
 
     @property
     def browser(self):
@@ -48,8 +58,6 @@ class ChromeHelper(object):
             return self._chrome
 
     def get_status(self):
-        if not self._executable_path:
-            return False
         if self._executable_path \
                 and not os.path.exists(self._executable_path):
             return False
@@ -73,6 +81,13 @@ class ChromeHelper(object):
         options.add_argument('--no-service-autorun')
         options.add_argument('--no-default-browser-check')
         options.add_argument('--password-store=basic')
+        if SystemUtils.is_windows() or SystemUtils.is_macos():
+            options.add_argument("--window-position=-32000,-32000")
+        if self._proxy:
+            proxy = Config().get_proxies().get("https")
+            if proxy:
+                proxy = proxy.split('/')[-1]
+            options.add_argument('--proxy-server=%s' % proxy or '')
         if self._headless:
             options.add_argument('--headless')
         prefs = {
@@ -80,12 +95,14 @@ class ChromeHelper(object):
             "profile.managed_default_content_settings.images": 2 if self._headless else 1,
             "excludeSwitches": ["enable-automation"]
         }
+        options.add_argument('−−lang=zh-CN')
         options.add_experimental_option("prefs", prefs)
         chrome = ChromeWithPrefs(options=options, driver_executable_path=self._executable_path)
         chrome.set_page_load_timeout(30)
         return chrome
 
-    def visit(self, url, ua=None, cookie=None, timeout=30):
+    def visit(self, url, ua=None, cookie=None, timeout=30, proxy=None):
+        self._proxy = proxy
         if not self.browser:
             return False
         try:
@@ -126,14 +143,9 @@ class ChromeHelper(object):
             print(str(err))
             return False
 
-    def pass_cloudflare(self, waittime=10):
-        cloudflare = False
-        for i in range(0, waittime):
-            if self.get_title() != "Just a moment...":
-                cloudflare = True
-                break
-            time.sleep(1)
-        return cloudflare
+    def pass_cloudflare(self):
+        challenge = CloudflareHelper.resolve_challenge(driver=self._chrome)
+        return challenge
 
     def execute_script(self, script):
         if not self._chrome:
@@ -238,3 +250,10 @@ class ChromeWithPrefs(uc.Chrome):
             # pylint: disable=protected-access
             # remove the experimental_options to avoid an error
             del options._experimental_options["prefs"]
+
+
+def init_chrome():
+    """
+    初始化chrome驱动
+    """
+    ChromeHelper().init_driver()

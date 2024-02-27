@@ -5,20 +5,21 @@ from app.utils.types import *
 class ModuleConf(object):
     # 菜单对应关系，配置WeChat应用中配置的菜单ID与执行命令的对应关系，需要手工修改
     # 菜单序号在https://work.weixin.qq.com/wework_admin/frame#apps 应用自定义菜单中维护，然后看日志输出的菜单序号是啥（按顺利能猜到的）....
-    # 命令对应关系：/ptt 下载文件转移；/ptr 删种；/pts 站点签到；/rst 目录同步；/rst 豆瓣想看；/utf 重新识别；
-    # /ssa 订阅搜索；/tbl 清理转移缓存；/trh 清理RSS缓存；/rss RSS下载；/udt 系统更新
+    # 命令对应关系：/ptt 下载文件转移；/ptr 删种；/pts 站点签到；/rst 目录同步；/db 豆瓣同步；/utf 重新识别；
+    # /ssa 订阅搜索；/tbl 清理转移缓存；/trh 清理RSS缓存；/rss RSS下载；/udt 系统更新；/sta 数据统计
     WECHAT_MENU = {
-        '_0_0': '/ptt',
-        '_0_1': '/ptr',
-        '_0_2': '/rss',
-        '_0_3': '/ssa',
-        '_1_0': '/rst',
-        '_1_1': '/db',
-        '_1_2': '/utf',
-        '_2_0': '/pts',
-        '_2_1': '/udt',
-        '_2_2': '/tbl',
-        '_2_3': '/trh'
+        '_0_0': '/ptt',  # 下载->下载文件转移
+        '_0_1': '/ptr',  # 下载->删种
+        '_0_2': '/rss',  # 下载->RSS下载
+        '_0_3': '/ssa',  # 下载->订阅搜索
+        '_1_0': '/rst',  # 同步->目录同步
+        '_1_1': '/db',   # 同步->豆瓣同步
+        '_1_2': '/utf',  # 同步->重新识别
+        '_2_0': '/pts',  # 管理->站点签到
+        '_2_1': '/udt',  # 管理->系统更新
+        '_2_2': '/tbl',  # 管理->清理转移缓存
+        '_2_3': '/trh',  # 管理->清理RSS缓存
+        '_2_4': '/sta'   # 管理->数据统计
     }
 
     # 全量转移模式
@@ -41,35 +42,16 @@ class ModuleConf(object):
         "move": RmtMode.MOVE
     }
 
-    # 下载器
-    DOWNLOADER_DICT = {
-        "qbittorrent": DownloaderType.QB,
-        "transmission": DownloaderType.TR,
-        "client115": DownloaderType.Client115,
-        "aria2": DownloaderType.Aria2,
-        "pikpak": DownloaderType.PikPak
-    }
-
-    # 索引器
-    INDEXER_DICT = {
-        "prowlarr": IndexerType.PROWLARR,
-        "jackett": IndexerType.JACKETT,
-        "builtin": IndexerType.BUILTIN
-    }
-
-    # 媒体服务器
-    MEDIASERVER_DICT = {
-        "emby": MediaServerType.EMBY,
-        "jellyfin": MediaServerType.JELLYFIN,
-        "plex": MediaServerType.PLEX
-    }
+    # 远程转移模式
+    REMOTE_RMT_MODES = [RmtMode.RCLONE, RmtMode.RCLONECOPY, RmtMode.MINIO, RmtMode.MINIOCOPY]
 
     # 消息通知类型
     MESSAGE_CONF = {
         "client": {
             "telegram": {
                 "name": "Telegram",
-                "img_url": "../static/img/telegram.png",
+                "img_url": "../static/img/message/telegram.png",
+                "color": "#22A7E7",
                 "search_type": SearchType.TG,
                 "config": {
                     "token": {
@@ -84,6 +66,13 @@ class ModuleConf(object):
                         "required": True,
                         "title": "Chat ID",
                         "tooltip": "接受消息通知的用户、群组或频道Chat ID，关注@getidsbot获取",
+                        "type": "text"
+                    },
+                    "thread_id": {
+                        "id": "telegram_thread_id",
+                        "required": False,
+                        "title": "Message Thread ID",
+                        "tooltip": "接受消息通知的群组话题 ID，https://api.telegram.org/bot${BOT_TOKEN}/getUpdates 获取",
                         "type": "text"
                     },
                     "user_ids": {
@@ -113,8 +102,10 @@ class ModuleConf(object):
             },
             "wechat": {
                 "name": "微信",
-                "img_url": "../static/img/wechat.png",
+                "img_url": "../static/img/message/wechat.png",
+                "color": "#00D20B",
                 "search_type": SearchType.WX,
+                "max_length": 2048,
                 "config": {
                     "corpid": {
                         "id": "wechat_corpid",
@@ -145,7 +136,7 @@ class ModuleConf(object):
                         "title": "消息推送代理",
                         "tooltip": "由于微信官方限制，2022年6月20日后创建的企业微信应用需要有固定的公网IP地址并加入IP白名单后才能发送消息，使用有固定公网IP的代理服务器转发可解决该问题；代理服务器需自行搭建，搭建方法可参考项目主页说明",
                         "type": "text",
-                        "placeholder": "https://wechat.nastool.cn"
+                        "placeholder": "消息推送代理的网址"
                     },
                     "token": {
                         "id": "wechat_token",
@@ -162,12 +153,21 @@ class ModuleConf(object):
                         "tooltip": "需要交互功能时才需要填写，在微信企业应用管理后台-接收消息设置页面生成，填入完成后重启本应用，然后再在微信页面输入地址确定",
                         "type": "text",
                         "placeholder": "API接收消息EncodingAESKey"
+                    },
+                    "adminUser": {
+                        "id": "wechat_adminUser",
+                        "required": False,
+                        "title": "AdminUser",
+                        "tooltip": "需要交互功能时才需要填写，可执行交互菜单命令的用户名，为空则不限制，多个;号分割。可在企业微信后台查看成员的Account ID",
+                        "type": "text",
+                        "placeholder": "可执行交互菜单的用户名"
                     }
                 }
             },
             "serverchan": {
                 "name": "Server酱",
-                "img_url": "../static/img/serverchan.png",
+                "img_url": "../static/img/message/serverchan.png",
+                "color": "#FEE6DB",
                 "config": {
                     "sckey": {
                         "id": "serverchan_sckey",
@@ -181,7 +181,8 @@ class ModuleConf(object):
             },
             "bark": {
                 "name": "Bark",
-                "img_url": "../static/img/bark.webp",
+                "img_url": "../static/img/message/bark.webp",
+                "color": "#FF3B30",
                 "config": {
                     "server": {
                         "id": "bark_server",
@@ -211,7 +212,8 @@ class ModuleConf(object):
             },
             "pushdeer": {
                 "name": "PushDeer",
-                "img_url": "../static/img/pushdeer.png",
+                "img_url": "../static/img/message/pushdeer.png",
+                "color": "#444E98",
                 "config": {
                     "server": {
                         "id": "pushdeer_server",
@@ -233,7 +235,8 @@ class ModuleConf(object):
             },
             "pushplus": {
                 "name": "PushPlus",
-                "img_url": "../static/img/pushplus.jpg",
+                "img_url": "../static/img/message/pushplus.jpg",
+                "color": "#047AEB",
                 "config": {
                     "token": {
                         "id": "pushplus_token",
@@ -272,7 +275,8 @@ class ModuleConf(object):
             },
             "iyuu": {
                 "name": "爱语飞飞",
-                "img_url": "../static/img/iyuu.png",
+                "img_url": "../static/img/message/iyuu.png",
+                "color": "#F5BD08",
                 "config": {
                     "token": {
                         "id": "iyuumsg_token",
@@ -286,7 +290,8 @@ class ModuleConf(object):
             },
             "slack": {
                 "name": "Slack",
-                "img_url": "../static/img/slack.png",
+                "img_url": "../static/img/message/slack.png",
+                "color": "#E01D5A",
                 "search_type": SearchType.SLACK,
                 "config": {
                     "bot_token": {
@@ -317,7 +322,8 @@ class ModuleConf(object):
             },
             "gotify": {
                 "name": "Gotify",
-                "img_url": "../static/img/gotify.png",
+                "img_url": "../static/img/message/gotify.png",
+                "color": "#72CAEE",
                 "config": {
                     "server": {
                         "id": "gotify_server",
@@ -344,9 +350,55 @@ class ModuleConf(object):
                     }
                 }
             },
+             "ntfy": {
+                "name": "ntfy",
+                "img_url": "../static/img/message/ntfy.webp",
+                "color": "#409D8A",
+                "config": {
+                    "server": {
+                        "id": "ntfy_server",
+                        "required": True,
+                        "title": "ntfy服务器地址",
+                        "tooltip": "自己搭建ntfy服务端地址",
+                        "type": "text",
+                        "placeholder": "http://localhost:8800"
+                    },
+                    "token": {
+                        "id": "ntfy_token",
+                        "required": True,
+                        "title": "令牌Token",
+                        "tooltip": "ntfy服务端创建的token",
+                        "type": "text"
+                    },
+                     "topic": {
+                        "id": "ntfy_topic",
+                        "required": True,
+                        "title": "topic",
+                        "tooltip": "ntfy创建的topic",
+                        "type": "text"
+                    },
+                    "priority": {
+                        "id": "ntfy_priority",
+                        "required": False,
+                        "title": "消息Priority",
+                        "tooltip": "消息通知优先级, 请填写数字(1-5), 默认: 4",
+                        "type": "text",
+                        "placeholder": "4"
+                    },
+                    "tags": {
+                        "id": "ntfy_tags",
+                        "required": False,
+                        "title": "消息tags",
+                        "tooltip": "消息tags,以逗号分隔, 请参阅ntfy官网, 默认: rotating_light",
+                        "type": "text",
+                        "placeholder": "rotating_light"
+                    }
+                }
+            },
             "chanify": {
                 "name": "Chanify",
-                "img_url": "../static/img/chanify.png",
+                "img_url": "../static/img/message/chanify.png",
+                "color": "#0B84FF",
                 "config": {
                     "server": {
                         "id": "chanify_server",
@@ -363,12 +415,21 @@ class ModuleConf(object):
                         "title": "令牌",
                         "tooltip": "在Chanify客户端频道中获取",
                         "type": "text"
+                    },
+                    "params": {
+                        "id": "chanify_params",
+                        "required": False,
+                        "title": "附加参数",
+                        "tooltip": "添加到Chanify通知中的附加参数，可用于自定义通知特性",
+                        "type": "text",
+                        "placeholder": "sound=0&interruption-level=active"
                     }
                 }
             },
             "synologychat": {
                 "name": "Synology Chat",
-                "img_url": "../static/img/synologychat.png",
+                "img_url": "../static/img/message/synologychat.png",
+                "color": "#26C07A",
                 "search_type": SearchType.SYNOLOGY,
                 "config": {
                     "webhook_url": {
@@ -431,12 +492,20 @@ class ModuleConf(object):
                 "name": "刷流删种",
                 "fuc_name": "brushtask_remove"
             },
+            "auto_remove_torrents": {
+                "name": "自动删种",
+                "fuc_name": "auto_remove_torrents"
+            },
+            "ptrefresh_date_message": {
+                "name": "数据统计",
+                "fuc_name": "ptrefresh_date_message"
+            },
             "mediaserver_message": {
                 "name": "媒体服务",
                 "fuc_name": "mediaserver_message"
             },
             "custom_message": {
-                "name": "自定义消息",
+                "name": "插件消息",
                 "fuc_name": "custom_message"
             }
         }
@@ -444,9 +513,9 @@ class ModuleConf(object):
 
     # 自动删种配置
     TORRENTREMOVER_DICT = {
-        "Qb": {
+        "qbittorrent": {
             "name": "Qbittorrent",
-            "img_url": "../static/img/qbittorrent.png",
+            "img_url": "../static/img/downloader/qbittorrent.png",
             "downloader_type": DownloaderType.QB,
             "torrent_state": {
                 "downloading": "正在下载_传输数据",
@@ -470,9 +539,9 @@ class ModuleConf(object):
                 "unknown": "未知状态",
             }
         },
-        "Tr": {
+        "transmission": {
             "name": "Transmission",
-            "img_url": "../static/img/transmission.png",
+            "img_url": "../static/img/downloader/transmission.png",
             "downloader_type": DownloaderType.TR,
             "torrent_state": {
                 "downloading": "正在下载",
@@ -506,11 +575,9 @@ class ModuleConf(object):
         }
     }
 
-    # 网络测试对象
+    # 网络测试对象，TMDB API除外
     NETTEST_TARGETS = [
         "www.themoviedb.org",
-        "api.themoviedb.org",
-        "api.tmdb.org",
         "image.tmdb.org",
         "webservice.fanart.tv",
         "api.telegram.org",
@@ -522,100 +589,135 @@ class ModuleConf(object):
     DOWNLOADER_CONF = {
         "qbittorrent": {
             "name": "Qbittorrent",
-            "img_url": "../static/img/qbittorrent.png",
-            "background": "bg-blue",
-            "test_command": "app.downloader.client.qbittorrent|Qbittorrent",
+            "img_url": "../static/img/downloader/qbittorrent.png",
+            "color": "#3872C2",
+            "monitor_enable": True,
+            "speedlimit_enable": True,
             "config": {
-                "qbhost": {
-                    "id": "qbittorrent.qbhost",
+                "host": {
+                    "id": "qbittorrent_host",
                     "required": True,
-                    "title": "IP地址",
-                    "tooltip": "配置IP地址，如为https则需要增加https://前缀",
+                    "title": "地址",
+                    "tooltip": "配置IP地址或域名，如为https则需要增加https://前缀",
                     "type": "text",
                     "placeholder": "127.0.0.1"
                 },
-                "qbport": {
-                    "id": "qbittorrent.qbport",
+                "port": {
+                    "id": "qbittorrent_port",
                     "required": True,
                     "title": "端口",
                     "type": "text",
                     "placeholder": "8080"
                 },
-                "qbusername": {
-                    "id": "qbittorrent.qbusername",
+                "username": {
+                    "id": "qbittorrent_username",
                     "required": True,
                     "title": "用户名",
                     "type": "text",
                     "placeholder": "admin"
                 },
-                "qbpassword": {
-                    "id": "qbittorrent.qbpassword",
+                "password": {
+                    "id": "qbittorrent_password",
                     "required": False,
                     "title": "密码",
                     "type": "password",
-                    "placeholder": "adminadmin"
+                    "placeholder": "password"
                 },
-                "force_upload": {
-                    "id": "qbittorrent.force_upload",
+                "torrent_management": {
+                    "id": "qbittorrent_torrent_management",
                     "required": False,
-                    "title": "自动强制作种",
-                    "tooltip": "开启后下载文件转移完成时会自动将对应种子设置为强制做种状态，需在基础设置中开启下载软件监控功能",
-                    "type": "switch"
-                },
-                "auto_management": {
-                    "id": "qbittorrent.auto_management",
-                    "required": False,
-                    "title": "自动管理模式",
-                    "tooltip": "开启后下载目录将由Qbittorrent自动管理，不再使用NASTool传递的下载目录，需要同时在下载目录设置中配置好分类标签",
-                    "type": "switch"
+                    "title": "种子管理模式",
+                    "tooltip": """【默认】将使用Qbittorrent客户端中的设置，NAStool不进行修改；<br>
+                                【手动】强制开启手动管理模式，下载目录由NAStool传递的下载目录决定；<br>
+                                【自动】强制开启自动管理模式，下载目录由NAStool传递的分类标签决定，没有分类标签的将使用下载器中的默认保存路径；<br>
+                                【注意】自动管理模式下，NAStool将在启动时根据下载目录设置自动为下载器创建相应分类（需设置下载保存目录和分类标签），下载器中已存在该分类且其保存目录与NAStool中设置的不一致时，将会覆盖下载器的设置。
+                                """,
+                    "type": "select",
+                    "options": {
+                        "default": "默认",
+                        "manual": "手动",
+                        "auto": "自动"
+                    },
+                    "default": "manual"
                 }
             }
         },
         "transmission": {
             "name": "Transmission",
-            "img_url": "../static/img/transmission.png",
-            "background": "bg-danger",
-            "test_command": "app.downloader.client.transmission|Transmission",
+            "img_url": "../static/img/downloader/transmission.png",
+            "color": "#B30100",
+            "monitor_enable": True,
+            "speedlimit_enable": True,
             "config": {
-                "trhost": {
-                    "id": "transmission.trhost",
+                "host": {
+                    "id": "transmission_host",
+                    "required": True,
+                    "title": "地址",
+                    "tooltip": "配置IP地址或域名，如为https则需要增加https://前缀",
+                    "type": "text",
+                    "placeholder": "127.0.0.1"
+                },
+                "port": {
+                    "id": "transmission_port",
+                    "required": True,
+                    "title": "端口",
+                    "type": "text",
+                    "placeholder": "9091"
+                },
+                "username": {
+                    "id": "transmission_username",
+                    "required": True,
+                    "title": "用户名",
+                    "type": "text",
+                    "placeholder": "admin"
+                },
+                "password": {
+                    "id": "transmission_password",
+                    "required": False,
+                    "title": "密码",
+                    "type": "password",
+                    "placeholder": "password"
+                }
+            }
+        },
+        "aria2": {
+            "name": "Aria2",
+            "img_url": "../static/img/downloader/aria2.png",
+            "color": "#B30100",
+            "monitor_enable": True,
+            "config": {
+                "host": {
+                    "id": "aria2_host",
                     "required": True,
                     "title": "IP地址",
                     "tooltip": "配置IP地址，如为https则需要增加https://前缀",
                     "type": "text",
                     "placeholder": "127.0.0.1"
                 },
-                "trport": {
-                    "id": "transmission.trport",
+                "port": {
+                    "id": "aria2_port",
                     "required": True,
                     "title": "端口",
                     "type": "text",
-                    "placeholder": "9091"
+                    "placeholder": "6800"
                 },
-                "trusername": {
-                    "id": "transmission.trusername",
+                "secret": {
+                    "id": "aria2_secret",
                     "required": True,
-                    "title": "用户名",
+                    "title": "令牌",
                     "type": "text",
-                    "placeholder": "admin"
-                },
-                "trpassword": {
-                    "id": "transmission.trpassword",
-                    "required": False,
-                    "title": "密码",
-                    "type": "password",
                     "placeholder": ""
                 }
             }
         },
-        "client115": {
+        "pan115": {
             "name": "115网盘",
-            "img_url": "../static/img/115.jpg",
+            "img_url": "../static/img/downloader/115.jpg",
             "background": "bg-azure",
-            "test_command": "app.downloader.client.client115|Client115",
+            "test_command": "app.downloader.client.pan115|Pan115",
             "config": {
                 "cookie": {
-                    "id": "client115.cookie",
+                    "id": "pan115_cookie",
                     "required": True,
                     "title": "Cookie",
                     "tooltip": "115网盘Cookie，通过115网盘网页端抓取Cookie",
@@ -624,52 +726,22 @@ class ModuleConf(object):
                 }
             }
         },
-        "aria2": {
-            "name": "Aria2",
-            "img_url": "../static/img/aria2.png",
-            "background": "bg-green",
-            "test_command": "app.downloader.client.aria2|Aria2",
-            "config": {
-                "host": {
-                    "id": "aria2.host",
-                    "required": True,
-                    "title": "IP地址",
-                    "tooltip": "配置IP地址，如为https则需要增加https://前缀",
-                    "type": "text",
-                    "placeholder": "127.0.0.1"
-                },
-                "port": {
-                    "id": "aria2.port",
-                    "required": True,
-                    "title": "端口",
-                    "type": "text",
-                    "placeholder": "6800"
-                },
-                "secret": {
-                    "id": "aria2.secret",
-                    "required": True,
-                    "title": "令牌",
-                    "type": "text",
-                    "placeholder": ""
-                }
-            }
-        },
         "pikpak": {
             "name": "PikPak",
-            "img_url": "../static/img/pikpak.png",
+            "img_url": "../static/img/downloader/pikpak.png",
             "background": "bg-indigo",
             "test_command": "app.downloader.client.pikpak|PikPak",
             "config": {
                 "username": {
-                    "id": "pikpak.username",
+                    "id": "pikpak_username",
                     "required": True,
-                    "title": "用户名",
-                    "tooltip": "用户名",
+                    "title": "账号",
+                    "tooltip": "PikPak的账号一般是手机号或者邮箱",
                     "type": "text",
                     "placeholder": ""
                 },
                 "password": {
-                    "id": "pikpak.password",
+                    "id": "pikpak_password",
                     "required": True,
                     "title": "密码",
                     "tooltip": "密码",
@@ -677,7 +749,7 @@ class ModuleConf(object):
                     "placeholder": ""
                 },
                 "proxy": {
-                    "id": "pikpak.proxy",
+                    "id": "pikpak_proxy",
                     "required": False,
                     "title": "代理",
                     "tooltip": "如果需要代理才能访问pikpak可以在此处填入代理地址",
@@ -685,14 +757,14 @@ class ModuleConf(object):
                     "placeholder": "127.0.0.1:7890"
                 }
             }
-        },
+        }
     }
 
     # 媒体服务器
     MEDIASERVER_CONF = {
         "emby": {
             "name": "Emby",
-            "img_url": "../static/img/emby.png",
+            "img_url": "../static/img/mediaserver/emby.png",
             "background": "bg-green",
             "test_command": "app.mediaserver.client.emby|Emby",
             "config": {
@@ -711,12 +783,20 @@ class ModuleConf(object):
                     "tooltip": "在Emby设置->高级->API密钥处生成，注意不要复制到了应用名称",
                     "type": "text",
                     "placeholder": ""
+                },
+                "play_host": {
+                    "id": "emby.play_host",
+                    "required": False,
+                    "title": "媒体播放地址",
+                    "tooltip": "配置播放设备的访问地址，用于媒体详情页跳转播放页面；如为https则需要增加https://前缀，留空则默认与服务器地址一致",
+                    "type": "text",
+                    "placeholder": "http://127.0.0.1:8096"
                 }
             }
         },
         "jellyfin": {
             "name": "Jellyfin",
-            "img_url": "../static/img/jellyfin.jpg",
+            "img_url": "../static/img/mediaserver/jellyfin.jpg",
             "background": "bg-purple",
             "test_command": "app.mediaserver.client.jellyfin|Jellyfin",
             "config": {
@@ -735,12 +815,20 @@ class ModuleConf(object):
                     "tooltip": "在Jellyfin设置->高级->API密钥处生成",
                     "type": "text",
                     "placeholder": ""
+                },
+                "play_host": {
+                    "id": "jellyfin.play_host",
+                    "required": False,
+                    "title": "媒体播放地址",
+                    "tooltip": "配置播放设备的访问地址，用于媒体详情页跳转播放页面；如为https则需要增加https://前缀，留空则默认与服务器地址一致",
+                    "type": "text",
+                    "placeholder": "http://127.0.0.1:8096"
                 }
             }
         },
         "plex": {
             "name": "Plex",
-            "img_url": "../static/img/plex.png",
+            "img_url": "../static/img/mediaserver/plex.png",
             "background": "bg-yellow",
             "test_command": "app.mediaserver.client.plex|Plex",
             "config": {
@@ -756,7 +844,7 @@ class ModuleConf(object):
                     "id": "plex.token",
                     "required": False,
                     "title": "X-Plex-Token",
-                    "tooltip": "Plex网页Cookie中的X-Plex-Token，通过浏览器F12->网络中获取，如填写将优先使用；Token与服务器名称、用户名及密码 二选一，推荐使用Token，连接速度更快",
+                    "tooltip": "Plex网页Url中的X-Plex-Token，通过浏览器F12->网络从请求URL中获取，如填写将优先使用；Token与服务器名称、用户名及密码 二选一，推荐使用Token，连接速度更快",
                     "type": "text",
                     "placeholder": "X-Plex-Token与其它认证信息二选一"
                 },
@@ -781,74 +869,33 @@ class ModuleConf(object):
                     "title": "密码",
                     "type": "password",
                     "placeholder": ""
+                },
+                "play_host": {
+                    "id": "plex.play_host",
+                    "required": False,
+                    "title": "媒体播放地址",
+                    "tooltip": "配置播放设备的访问地址，用于媒体详情页跳转播放页面；如为https则需要增加https://前缀，留空则默认与服务器地址一致",
+                    "type": "text",
+                    "placeholder": "https://app.plex.tv"
                 }
             }
         },
     }
 
     # 索引器
-    INDEXER_CONF = {
-        "jackett": {
-            "name": "Jackett",
-            "img_url": "./static/img/jackett.png",
-            "background": "bg-black",
-            "test_command": "app.indexer.client.jackett|Jackett",
-            "config": {
-                "host": {
-                    "id": "jackett.host",
-                    "required": True,
-                    "title": "Jackett地址",
-                    "tooltip": "Jackett访问地址和端口，如为https需加https://前缀。注意需要先在Jackett中添加indexer，才能正常测试通过和使用",
-                    "type": "text",
-                    "placeholder": "http://127.0.0.1:9117"
-                },
-                "api_key": {
-                    "id": "jackett.api_key",
-                    "required": True,
-                    "title": "Api Key",
-                    "tooltip": "Jackett管理界面右上角复制API Key",
-                    "type": "text",
-                    "placeholder": ""
-                },
-                "password": {
-                    "id": "jackett.password",
-                    "required": False,
-                    "title": "密码",
-                    "tooltip": "Jackett管理界面中配置的Admin password，如未配置可为空",
-                    "type": "password",
-                    "placeholder": ""
-                }
-            }
-        },
-        "prowlarr": {
-            "name": "Prowlarr",
-            "img_url": "../static/img/prowlarr.png",
-            "background": "bg-orange",
-            "test_command": "app.indexer.client.prowlarr|Prowlarr",
-            "config": {
-                "host": {
-                    "id": "prowlarr.host",
-                    "required": True,
-                    "title": "Prowlarr地址",
-                    "tooltip": "Prowlarr访问地址和端口，如为https需加https://前缀。注意需要先在Prowlarr中添加搜刮器，同时勾选所有搜刮器后搜索一次，才能正常测试通过和使用",
-                    "type": "text",
-                    "placeholder": "http://127.0.0.1:9696"
-                },
-                "api_key": {
-                    "id": "prowlarr.api_key",
-                    "required": True,
-                    "title": "Api Key",
-                    "tooltip": "在Prowlarr->Settings->General->Security-> API Key中获取",
-                    "type": "text",
-                    "placeholder": ""
-                }
-            }
-        }
-    }
+    INDEXER_CONF = {}
 
     # 发现过滤器
     DISCOVER_FILTER_CONF = {
         "tmdb_movie": {
+            "sort_by": {
+                "name": "排序",
+                "type": "dropdown",
+                "options": [{'value': '', 'name': '默认'},
+                            {'value': 'popularity.desc', 'name': '近期热度'},
+                            {'value': 'vote_average.desc', 'name': '高分优先'},
+                            {'value': 'release_date.desc', 'name': '首播时间'}]
+            },
             "with_genres": {
                 "name": "类型",
                 "type": "dropdown",
@@ -881,6 +928,14 @@ class ModuleConf(object):
             }
         },
         "tmdb_tv": {
+            "sort_by": {
+                "name": "排序",
+                "type": "dropdown",
+                "options": [{'value': '', 'name': '默认'},
+                            {'value': 'popularity.desc', 'name': '近期热度'},
+                            {'value': 'vote_average.desc', 'name': '高分优先'},
+                            {'value': 'first_air_date.desc', 'name': '首播时间'}]
+            },
             "with_genres": {
                 "name": "类型",
                 "type": "dropdown",
@@ -916,9 +971,9 @@ class ModuleConf(object):
                 "type": "dropdown",
                 "options": [{'value': '', 'name': '默认'},
                             {'value': 'U', 'name': '综合排序'},
-                            {'value': 'T', 'name': '首播时间'},
+                            {'value': 'T', 'name': '近期热度'},
                             {'value': 'S', 'name': '高分优先'},
-                            {'value': 'R', 'name': '近期热度'}]
+                            {'value': 'R', 'name': '首播时间'}]
             },
             "tags": {
                 "name": "类型",
@@ -946,9 +1001,9 @@ class ModuleConf(object):
                 "type": "dropdown",
                 "options": [{'value': '', 'name': '默认'},
                             {'value': 'U', 'name': '综合排序'},
-                            {'value': 'T', 'name': '首播时间'},
+                            {'value': 'T', 'name': '近期热度'},
                             {'value': 'S', 'name': '高分优先'},
-                            {'value': 'R', 'name': '近期热度'}]
+                            {'value': 'R', 'name': '首播时间'}]
             },
             "tags": {
                 "name": "地区",

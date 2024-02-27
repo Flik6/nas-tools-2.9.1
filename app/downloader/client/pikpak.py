@@ -9,46 +9,58 @@ from config import Config
 
 
 class PikPak(_IDownloadClient):
+    
     schema = "pikpak"
-    client_type = DownloaderType.PikPak.value
+    # 下载器ID
+    client_id = "pikpak"
+    client_type = DownloaderType.PIKPAK
+    client_name = DownloaderType.PIKPAK.value
     _client_config = {}
 
-    downclient = None
-    lasthash = None
-
+    _client = None
+    username = None
+    password = None
+    proxy = None
     def __init__(self, config=None):
         if config:
             self._client_config = config
-        else:
-            self._client_config = Config().get_config('pikpak')
         self.init_config()
         self.connect()
 
     def init_config(self):
         if self._client_config:
-            self.downclient = PikPakApi(
-                username=self._client_config.get("username"),
-                password=self._client_config.get("password"),
-                proxy=self._client_config.get("proxy"),
+            self.username = self._client_config.get("username")
+            self.password = self._client_config.get("password")
+            self.proxy = self._client_config.get("proxy")
+            if self.proxy:
+                if not self.proxy.startswith('http'):
+                    self.proxy = "http://" + self.host
+                if self.proxy.endswith('/'):
+                    self.proxy = self.host[:-1]
+            if self.username and self.password:
+                self._client = PikPakApi(
+                username=self.username,
+                password=self.password,
+                proxy=self.proxy,
             )
 
     @classmethod
     def match(cls, ctype):
-        return True if ctype in [cls.schema, cls.client_type] else False
+        return True if ctype in [cls.client_id, cls.client_type, cls.client_name] else False
 
     def connect(self):
         try:
-            asyncio.run(self.downclient.login())
+            asyncio.run(self._client.login())
         except Exception as err:
             print(str(err))
             return
 
     def get_status(self):
-        if not self.downclient:
+        if not self._client:
             return False
         try:
-            asyncio.run(self.downclient.login())
-            if self.downclient.user_id is None:
+            asyncio.run(self._client.login())
+            if self._client.user_id is None:
                 log.info("PikPak 登录失败")
                 return False
         except Exception as err:
@@ -59,13 +71,13 @@ class PikPak(_IDownloadClient):
 
     def get_torrents(self, ids=None, status=None, **kwargs):
         rv = []
-        if self.downclient.user_id is None:
+        if self._client.user_id is None:
             if self.get_status():
                 return [], False
 
         if ids is not None:
             for id in ids:
-                status = asyncio.run(self.downclient.get_task_status(id, ''))
+                status = asyncio.run(self._client.get_task_status(id, ''))
                 if status == DownloadStatus.downloading:
                     rv.append({"id": id, "finish": False})
                 if status == DownloadStatus.done:
@@ -76,11 +88,11 @@ class PikPak(_IDownloadClient):
         return []
 
     def get_downloading_torrents(self, **kwargs):
-        if self.downclient.user_id is None:
+        if self._client.user_id is None:
             if self.get_status():
                 return []
         try:
-            offline_list = asyncio.run(self.downclient.offline_list())
+            offline_list = asyncio.run(self._client.offline_list())
             return offline_list['tasks']
         except Exception as err:
             print(str(err))
@@ -94,17 +106,9 @@ class PikPak(_IDownloadClient):
 
     def add_torrent(self, content, download_dir=None, **kwargs):
         try:
-            folder = asyncio.run(
-                self.downclient.path_to_id(download_dir, True))
-            count = len(folder)
-            if count == 0:
-                print("create parent folder failed")
-                return None
-            else:
-                task = asyncio.run(self.downclient.offline_download(
-                    content, folder[count - 1]["id"]
-                ))
-                return task["task"]["id"]
+            task = asyncio.run(self._client.offline_download(content, download_dir))
+            taskId = task.get('task', {}).get('id')
+            return taskId is not None and bool(taskId)
         except Exception as e:
             log.error("PikPak 添加离线下载任务失败: %s" % str(e))
             return None
@@ -150,4 +154,16 @@ class PikPak(_IDownloadClient):
         """
         设置速度限制
         """
+        pass
+
+    def get_type(self):
+        return self.client_type
+
+    def get_files(self, tid):
+        pass
+
+    def recheck_torrents(self, ids):
+        pass
+
+    def set_torrents_tag(self, ids, tags):
         pass

@@ -1,13 +1,15 @@
-import re
-from config import Config
+import regex as re
+from app.utils.commons import singleton
 
 
+@singleton
 class ReleaseGroupsMatcher(object):
     """
     识别制作组、字幕组
     """
-    __config = None
     __release_groups = None
+    custom_release_groups = None
+    custom_separator = None
     RELEASE_GROUPS = {
         "0ff": ['FF(?:(?:A|WE)B|CD|E(?:DU|B)|TV)'],
         "1pt": [],
@@ -72,21 +74,11 @@ class ReleaseGroupsMatcher(object):
     }
 
     def __init__(self):
-        self.__config = Config()
         release_groups = []
         for site_groups in self.RELEASE_GROUPS.values():
             for release_group in site_groups:
                 release_groups.append(release_group)
-        custom_release_groups = (self.__config.get_config('laboratory') or {}).get('release_groups')
-        if custom_release_groups:
-            if custom_release_groups.startswith(';'):
-                custom_release_groups = custom_release_groups[1:]
-            if custom_release_groups.endswith(';'):
-                custom_release_groups = custom_release_groups[:-1]
-            custom_release_groups = custom_release_groups.replace(";", "|")
-            self.__release_groups = f"{'|'.join(release_groups)}|{custom_release_groups}"
-        else:
-            self.__release_groups = '|'.join(release_groups)
+        self.__release_groups = '|'.join(release_groups)
 
     def match(self, title=None, groups=None):
         """
@@ -97,7 +89,23 @@ class ReleaseGroupsMatcher(object):
         if not title:
             return ""
         if not groups:
-            groups = self.__release_groups
+            if self.custom_release_groups:
+                groups = f"{self.__release_groups}|{self.custom_release_groups}"
+            else:
+                groups = self.__release_groups
         title = f"{title} "
-        groups_re = re.compile(r"(?<=[-@\[￡【])(?:%s)(?=[@.\s\]\[】])" % groups, re.I)
-        return '@'.join(re.findall(groups_re, title))
+        groups_re = re.compile(r"(?<=[-@\[￡【&])(?:%s)(?=[@.\s\]\[】&])" % groups, re.I)
+        # 处理一个制作组识别多次的情况，保留顺序
+        unique_groups = []
+        for item in re.findall(groups_re, title):
+            if item not in unique_groups:
+                unique_groups.append(item)
+        separator = self.custom_separator or "@"
+        return separator.join(unique_groups)
+
+    def update_custom(self, release_groups=None, separator=None):
+        """
+        更新自定义制作组/字幕组，自定义分隔符
+        """
+        self.custom_release_groups = release_groups
+        self.custom_separator = separator

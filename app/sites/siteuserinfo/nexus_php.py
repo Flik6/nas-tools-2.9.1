@@ -48,15 +48,17 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
         if not html:
             return
 
-        message_labels = html.xpath('//a[contains(@href, "messages.php")]/..')
+        message_labels = html.xpath('//a[@href="messages.php"]/..')
+        message_labels.extend(html.xpath('//a[contains(@href, "messages.php")]/..'))
         if message_labels:
             message_text = message_labels[0].xpath("string(.)")
 
-            log.debug(f"【Sites】{self.site_name} 消息原始信息 {message_text}")
             message_unread_match = re.findall(r"[^Date](信息箱\s*|\(|你有\xa0)(\d+)", message_text)
 
             if message_unread_match and len(message_unread_match[-1]) == 2:
                 self.message_unread = StringUtils.str_int(message_unread_match[-1][1])
+            elif message_text.isdigit():
+                self.message_unread = StringUtils.str_int(message_text)
 
     def _parse_user_base_info(self, html_text):
         # 合并解析，减少额外请求调用
@@ -83,23 +85,36 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
             return
 
     def __parse_user_traffic_info(self, html_text):
+        html = etree.HTML(html_text)
         html_text = self._prepare_html_text(html_text)
         upload_match = re.search(r"[^总]上[传傳]量?[:：_<>/a-zA-Z-=\"'\s#;]+([\d,.\s]+[KMGTPI]*B)", html_text,
                                  re.IGNORECASE)
+        if not upload_match:
+            upload_match = re.search(r'<span class="font-bold">上[传傳]量?[:：]</span><span>([\d.]+ [A-Za-z]+)</span>', html_text)
         self.upload = StringUtils.num_filesize(upload_match.group(1).strip()) if upload_match else 0
+
         download_match = re.search(r"[^总子影力]下[载載]量?[:：_<>/a-zA-Z-=\"'\s#;]+([\d,.\s]+[KMGTPI]*B)", html_text,
                                    re.IGNORECASE)
+        if not download_match:
+            download_match = re.search(r'<span class="font-bold">下[载載]量?[:：]</span><span>([\d.]+ [A-Za-z]+)</span>', html_text)
         self.download = StringUtils.num_filesize(download_match.group(1).strip()) if download_match else 0
+
         ratio_match = re.search(r"分享率[:：_<>/a-zA-Z-=\"'\s#;]+([\d,.\s]+)", html_text)
-        self.ratio = StringUtils.str_float(ratio_match.group(1)) if (
-                ratio_match and ratio_match.group(1).strip()) else 0.0
+        # 计算分享率
+        calc_ratio = 0.0 if self.download <= 0.0 else round(self.upload / self.download, 3)
+        # 优先使用页面上的分享率
+        self.ratio = StringUtils.str_float(ratio_match.group(1)) if (ratio_match and ratio_match.group(1).strip()) else calc_ratio
+        if not self.ratio:
+            ratio_element = html.xpath('//span[@class="font-bold"][contains(text(), "分享率：")]/following-sibling::span/font/text()')
+            if ratio_element:
+                _ratio = ratio_element[0].strip() if ratio_element else "0"
+                self.ratio = StringUtils.str_float(_ratio) if StringUtils.str_float(_ratio) else 0.0
+
         leeching_match = re.search(r"(Torrents leeching|下载中)[\u4E00-\u9FA5\D\s]+(\d+)[\s\S]+<", html_text)
         self.leeching = StringUtils.str_int(leeching_match.group(2)) if leeching_match and leeching_match.group(
             2).strip() else 0
-        html = etree.HTML(html_text)
-        tmps = html.xpath('//span[@class = "ucoin-symbol ucoin-gold"]//text()') if html else None
-        if tmps:
-            self.bonus = StringUtils.str_float(str(tmps[-1]))
+        has_ucoin, self.bonus = self.__parse_ucoin(html)
+        if has_ucoin:
             return
         tmps = html.xpath('//a[contains(@href,"mybonus")]/text()') if html else None
         if tmps:
@@ -108,17 +123,44 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
             if bonus_match and bonus_match.group(1).strip():
                 self.bonus = StringUtils.str_float(bonus_match.group(1))
                 return
-        bonus_match = re.search(r"mybonus.[\[\]:：<>/a-zA-Z_\-=\"'\s#;.(使用魔力值豆]+\s*([\d,.]+)[<()&\s]", html_text)
+        bonus_match = re.search(r"mybonus.[\[\]:：<>/a-zA-Z_\-=\"'\s#;.(使用魔力值豆]+\s*([\d,.]+)[<()&\s\[]", html_text)
         try:
             if bonus_match and bonus_match.group(1).strip():
                 self.bonus = StringUtils.str_float(bonus_match.group(1))
                 return
-            bonus_match = re.search(r"[魔力值|\]][\[\]:：<>/a-zA-Z_\-=\"'\s#;]+\s*([\d,.]+)[<()&\s]", html_text,
+            bonus_match = re.search(r"[魔力值|\]][\[\]:：<>/a-zA-Z_\-=\"'\s#;]+\s*([\d,.]+|\"[\d,.]+\")[<>()&\s\[]",
+                                    html_text,
                                     flags=re.S)
             if bonus_match and bonus_match.group(1).strip():
-                self.bonus = StringUtils.str_float(bonus_match.group(1))
+                self.bonus = StringUtils.str_float(bonus_match.group(1).strip('"'))
         except Exception as err:
             ExceptionUtils.exception_traceback(err)
+
+    @staticmethod
+    def __parse_ucoin(html):
+        """
+        解析ucoin, 统一转换为铜币
+        :param html:
+        :return:
+        """
+        if html:
+            gold, silver, copper = None, None, None
+
+            golds = html.xpath('//span[@class = "ucoin-symbol ucoin-gold"]//text()')
+            if golds:
+                gold = StringUtils.str_float(str(golds[-1]))
+            silvers = html.xpath('//span[@class = "ucoin-symbol ucoin-silver"]//text()')
+            if silvers:
+                silver = StringUtils.str_float(str(silvers[-1]))
+            coppers = html.xpath('//span[@class = "ucoin-symbol ucoin-copper"]//text()')
+            if coppers:
+                copper = StringUtils.str_float(str(coppers[-1]))
+            if gold or silver or copper:
+                gold = gold if gold else 0
+                silver = silver if silver else 0
+                copper = copper if copper else 0
+                return True, gold * 100 * 100 + silver * 100 + copper
+        return False, 0.0
 
     def _parse_user_traffic_info(self, html_text):
         """
@@ -139,22 +181,39 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
         if not html:
             return None
 
+        # 首页存在扩展链接，使用扩展链接
+        seeding_url_text = html.xpath('//a[contains(@href,"torrents.php") '
+                                      'and contains(@href,"seeding")]/@href')
+        if multi_page is False and seeding_url_text and seeding_url_text[0].strip():
+            self._torrent_seeding_page = seeding_url_text[0].strip()
+            return self._torrent_seeding_page
+
         size_col = 3
         seeders_col = 4
         # 搜索size列
-        size_col_xpath = '//tr[position()=1]/td[(img[@class="size"] and img[@alt="size"]) or (text() = "大小")]'
+        size_col_xpath = '//tr[position()=1]/' \
+                         'td[(img[@class="size"] and img[@alt="size"])' \
+                         ' or (text() = "大小")' \
+                         ' or (a/img[@class="size" and @alt="size"])]'
         if html.xpath(size_col_xpath):
             size_col = len(html.xpath(f'{size_col_xpath}/preceding-sibling::td')) + 1
         # 搜索seeders列
-        seeders_col_xpath = '//tr[position()=1]/td[(img[@class="seeders"] and img[@alt="seeders"]) or (text() = "在做种")]'
+        seeders_col_xpath = '//tr[position()=1]/' \
+                            'td[(img[@class="seeders"] and img[@alt="seeders"])' \
+                            ' or (text() = "在做种")' \
+                            ' or (a/img[@class="seeders" and @alt="seeders"])]'
         if html.xpath(seeders_col_xpath):
             seeders_col = len(html.xpath(f'{seeders_col_xpath}/preceding-sibling::td')) + 1
 
         page_seeding = 0
         page_seeding_size = 0
         page_seeding_info = []
-        seeding_sizes = html.xpath(f'//tr[position()>1]/td[{size_col}]')
-        seeding_seeders = html.xpath(f'//tr[position()>1]/td[{seeders_col}]//text()')
+        # 如果 table class="torrents"，则增加table[@class="torrents"]
+        table_class = '//table[@class="torrents"]' if html.xpath('//table[@class="torrents"]') else ''
+        seeding_sizes = html.xpath(f'{table_class}//tr[position()>1]/td[{size_col}]')
+        seeding_seeders = html.xpath(f'{table_class}//tr[position()>1]/td[{seeders_col}]/b/a/text()')
+        if not seeding_seeders:
+            seeding_seeders = html.xpath(f'{table_class}//tr[position()>1]/td[{seeders_col}]//text()')
         if seeding_sizes and seeding_seeders:
             page_seeding = len(seeding_sizes)
 
@@ -171,7 +230,7 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
 
         # 是否存在下页数据
         next_page = None
-        next_page_text = html.xpath('//a[contains(.//text(), "下一页") or contains(.//text(), "下一頁")]/@href')
+        next_page_text = html.xpath('//a[contains(.//text(), "下一页") or contains(.//text(), "下一頁") or contains(.//text(), ">")]/@href')
         if next_page_text:
             next_page = next_page_text[-1].strip()
             # fix up page url
@@ -192,12 +251,37 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
 
         self.__get_user_level(html)
 
+        self.__fixup_traffic_info(html)
+
         # 加入日期
         join_at_text = html.xpath(
             '//tr/td[text()="加入日期" or text()="注册日期" or *[text()="加入日期"]]/following-sibling::td[1]//text()'
-            '|//div/b[text()="加入日期"]/../text()')
+            '|//div/b[text()="加入日期"]/../text()|//span[text()="加入日期："]/following-sibling::span[1]/text()')
         if join_at_text:
             self.join_at = StringUtils.unify_datetime_str(join_at_text[0].split(' (')[0].strip())
+
+        upload_match = re.search(r"[^总]上[传傳]量?[:：_<>/a-zA-Z-=\"'\s#;]+([\d,.\s]+[KMGTPI]*B)", html_text,
+                                 re.IGNORECASE)
+        if not upload_match:
+            upload_match = re.search(r'<span class="font-bold">上[传傳]量?[:：]</span><span>([\d.]+ [A-Za-z]+)</span>', html_text)
+        self.upload = StringUtils.num_filesize(upload_match.group(1).strip()) if upload_match else 0
+
+        download_match = re.search(r"[^总子影力]下[载載]量?[:：_<>/a-zA-Z-=\"'\s#;]+([\d,.\s]+[KMGTPI]*B)", html_text,
+                                   re.IGNORECASE)
+        if not download_match:
+            download_match = re.search(r'<span class="font-bold">下[载載]量?[:：]</span><span>([\d.]+ [A-Za-z]+)</span>', html_text)
+        self.download = StringUtils.num_filesize(download_match.group(1).strip()) if download_match else 0
+
+        ratio_match = re.search(r"分享率[:：_<>/a-zA-Z-=\"'\s#;]+([\d,.\s]+)", html_text)
+        # 计算分享率
+        calc_ratio = 0.0 if self.download <= 0.0 else round(self.upload / self.download, 3)
+        # 优先使用页面上的分享率
+        self.ratio = StringUtils.str_float(ratio_match.group(1)) if (ratio_match and ratio_match.group(1).strip()) else calc_ratio
+        if not self.ratio or self.ratio == 0.0:
+            ratio_element = html.xpath('//span[@class="font-bold"][contains(text(), "分享率：")]/following-sibling::span/font/text()')
+            if ratio_element:
+                _ratio = ratio_element[0].strip() if ratio_element else "0"
+                self.ratio = StringUtils.str_float(_ratio) if StringUtils.str_float(_ratio) else 0.0
 
         # 做种体积 & 做种数
         # seeding 页面获取不到的话，此处再获取一次
@@ -278,6 +362,15 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
             self.user_level = user_levels_text[0].strip()
             return
 
+        user_levels_text = html.xpath('//span[@class="font-bold m-auto" and contains(text(), "等级：")]/following-sibling::span/b')
+        if user_levels_text:
+            user_level_element = user_levels_text[0]
+            if not StringUtils.is_string_and_not_empty(user_level_element.text):
+                return
+            self.user_level = user_level_element.text.strip()
+            log.debug(f"【Sites】站点 {self.site_name} 等级: {self.user_level}")
+            return
+
         user_levels_text = html.xpath('//tr/td[text()="等級" or text()="等级"]/'
                                       'following-sibling::td[1 and not(img)]'
                                       '|//tr/td[text()="等級" or text()="等级"]/'
@@ -341,3 +434,10 @@ class NexusPhpSiteUserInfo(_ISiteUserInfo):
             message_content_text = message_content[0].xpath("string(.)").strip()
 
         return message_head_text, message_date_text, message_content_text
+
+    def __fixup_traffic_info(self, html):
+        # fixup bonus
+        if not self.bonus:
+            bonus_text = html.xpath('//tr/td[text()="魔力值" or text()="猫粮"]/following-sibling::td[1]/text()')
+            if bonus_text:
+                self.bonus = StringUtils.str_float(bonus_text[0].strip())

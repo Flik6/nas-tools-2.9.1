@@ -1,6 +1,7 @@
 import os
 import re
 
+import log
 from app.utils import RequestUtils, ExceptionUtils, StringUtils
 from app.utils.types import DownloaderType
 from config import Config
@@ -11,19 +12,20 @@ from app.downloader.client._pyaria2 import PyAria2
 class Aria2(_IDownloadClient):
 
     schema = "aria2"
-    client_type = DownloaderType.Aria2.value
+    # 下载器ID
+    client_id = "aria2"
+    client_type = DownloaderType.ARIA2
+    client_name = DownloaderType.ARIA2.value
     _client_config = {}
 
     _client = None
     host = None
     port = None
     secret = None
-
+    download_dir = []
     def __init__(self, config=None):
         if config:
             self._client_config = config
-        else:
-            self._client_config = Config().get_config('aria2')
         self.init_config()
         self.connect()
 
@@ -37,12 +39,13 @@ class Aria2(_IDownloadClient):
                     self.host = self.host[:-1]
             self.port = self._client_config.get("port")
             self.secret = self._client_config.get("secret")
+            self.download_dir = self._client_config.get('download_dir') or []
             if self.host and self.port:
                 self._client = PyAria2(secret=self.secret, host=self.host, port=self.port)
 
     @classmethod
     def match(cls, ctype):
-        return True if ctype in [cls.schema, cls.client_type] else False
+        return True if ctype in [cls.client_id, cls.client_type, cls.client_name] else False
 
     def connect(self):
         pass
@@ -79,7 +82,7 @@ class Aria2(_IDownloadClient):
     def set_torrents_status(self, ids, **kwargs):
         return self.delete_torrents(ids=ids, delete_file=False)
 
-    def get_transfer_task(self, **kwargs):
+    def get_transfer_task(self, tag=None, match_path=False):
         if not self._client:
             return []
         torrents = self.get_completed_torrents()
@@ -91,8 +94,12 @@ class Aria2(_IDownloadClient):
             path = torrent.get("dir")
             if not path:
                 continue
-            true_path = self.get_replace_path(path)
-            trans_tasks.append({'path': os.path.join(true_path, name), 'id': torrent.get("gid")})
+            true_path, replace_flag = self.get_replace_path(path, self.download_dir)
+            # 开启目录隔离，未进行目录替换的不处理
+            if match_path and not replace_flag:
+                log.debug(f"【{self.client_name}】{self.name} 开启目录隔离，但 {torrent.name} 未匹配下载目录范围")
+                continue
+            trans_tasks.append({'path': os.path.join(true_path, name).replace("\\", "/"), 'id': torrent.get("gid")})
         return trans_tasks
 
     def get_remove_torrents(self, **kwargs):
@@ -147,10 +154,15 @@ class Aria2(_IDownloadClient):
                 progress = round(int(torrent.get('completedLength')) / int(torrent.get("totalLength")), 1) * 100
             except ZeroDivisionError:
                 progress = 0.0
-            state = "Downloading"
-            _dlspeed = StringUtils.str_filesize(torrent.get('downloadSpeed'))
-            _upspeed = StringUtils.str_filesize(torrent.get('uploadSpeed'))
-            speed = "%s%sB/s %s%sB/s" % (chr(8595), _dlspeed, chr(8593), _upspeed)
+            if torrent.get('status') in ['paused']:
+                state = "Stoped"
+                speed = "已暂停"
+            else:
+                state = "Downloading"
+                _dlspeed = StringUtils.str_filesize(torrent.get('downloadSpeed'))
+                _upspeed = StringUtils.str_filesize(torrent.get('uploadSpeed'))
+                speed = "%s%sB/s %s%sB/s" % (chr(8595), _dlspeed, chr(8593), _upspeed)
+
             DispTorrents.append({
                 'id': torrent.get('gid'),
                 'name': torrent.get('bittorrent', {}).get('info', {}).get("name"),
@@ -158,10 +170,42 @@ class Aria2(_IDownloadClient):
                 'state': state,
                 'progress': progress
             })
+            
         return DispTorrents
 
-    def set_speed_limit(self, **kwargs):
+    def set_speed_limit(self, download_limit=None, upload_limit=None):
         """
         设置速度限制
+        :param download_limit: 下载速度限制，单位KB/s
+        :param upload_limit: 上传速度限制，单位kB/s
         """
+        if not self._client:
+            return
+        download_limit = download_limit * 1024
+        upload_limit = upload_limit * 1024
+        try:
+            speed_opt = self._client.getGlobalOption()
+            if speed_opt['max-overall-upload-limit'] != upload_limit:
+                speed_opt['max-overall-upload-limit'] = upload_limit
+            if speed_opt['max-overall-download-limit'] != download_limit:
+                speed_opt['max-overall-download-limit'] = download_limit
+            return self._client.changeGlobalOption(speed_opt)
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+            return False
+
+    def get_type(self):
+        return self.client_type
+
+    def get_files(self, tid):
+        try:
+            return self._client.getFiles(gid=tid)
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+            return None
+
+    def recheck_torrents(self, ids):
+        pass
+
+    def set_torrents_tag(self, ids, tags):
         pass

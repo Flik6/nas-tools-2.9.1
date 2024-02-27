@@ -3,16 +3,16 @@ import re
 
 import log
 from app.downloader import Downloader
-from app.helper import DbHelper, ProgressHelper
+from app.helper import ProgressHelper
+from app.helper.openai_helper import OpenAiHelper
 from app.indexer import Indexer
 from app.media import Media, DouBan
-from app.media.meta import MetaInfo
 from app.message import Message
 from app.searcher import Searcher
 from app.sites import Sites
 from app.subscribe import Subscribe
 from app.utils import StringUtils, Torrent
-from app.utils.types import SearchType, IndexerType
+from app.utils.types import SearchType, IndexerType, ProgressKey, RssType
 from config import Config
 from web.backend.web_utils import WebUtils
 
@@ -32,14 +32,16 @@ def search_medias_for_web(content, ident_flag=True, filters=None, tmdbid=None, m
     """
     mtype, key_word, season_num, episode_num, year, content = StringUtils.get_keyword_from_string(content)
     if not key_word:
-        log.info("【Web】%s 检索关键字有误！" % content)
+        log.info("【Web】%s 搜索关键字有误！" % content)
         return -1, "%s 未识别到搜索关键字！" % content
     # 类型
     if media_type:
         mtype = media_type
     # 开始进度
-    search_process = ProgressHelper()
-    search_process.start('search')
+    _searcher = Searcher()
+    _process = ProgressHelper()
+    _media = Media()
+    _process.start(ProgressKey.Search)
     # 识别媒体
     media_info = None
     if ident_flag:
@@ -49,8 +51,8 @@ def search_medias_for_web(content, ident_flag=True, filters=None, tmdbid=None, m
             media_info = WebUtils.get_mediainfo_from_id(mtype=mtype, mediaid=tmdbid)
         else:
             # 按输入名称查
-            media_info = Media().get_media_info(mtype=media_type or mtype,
-                                                title=content)
+            media_info = _media.get_media_info(mtype=media_type or mtype,
+                                               title=content)
 
         # 整合集
         if media_info:
@@ -84,7 +86,7 @@ def search_medias_for_web(content, ident_flag=True, filters=None, tmdbid=None, m
                 if media_info.original_language == "en":
                     search_en_name = media_info.original_title
                 else:
-                    en_title = Media().get_tmdb_en_title(media_info)
+                    en_title = _media.get_tmdb_en_title(media_info)
                     if en_title:
                         search_en_name = en_title
             # 两次搜索名称
@@ -128,48 +130,48 @@ def search_medias_for_web(content, ident_flag=True, filters=None, tmdbid=None, m
     # 整合高级查询条件
     if filters:
         filter_args.update(filters)
-    # 开始检索
-    log.info("【Web】开始检索 %s ..." % content)
-    media_list = Searcher().search_medias(key_word=first_search_name,
-                                          filter_args=filter_args,
-                                          match_media=media_info,
-                                          in_from=SearchType.WEB)
+    # 开始搜索
+    log.info("【Web】开始搜索 %s ..." % content)
+    media_list = _searcher.search_medias(key_word=first_search_name,
+                                         filter_args=filter_args,
+                                         match_media=media_info,
+                                         in_from=SearchType.WEB)
     # 使用第二名称重新搜索
     if ident_flag \
             and len(media_list) == 0 \
             and second_search_name \
             and second_search_name != first_search_name:
-        search_process.start('search')
-        search_process.update(ptype='search',
-                              text="%s 未检索到资源,尝试通过 %s 重新检索 ..." % (first_search_name, second_search_name))
-        log.info("【Searcher】%s 未检索到资源,尝试通过 %s 重新检索 ..." % (first_search_name, second_search_name))
-        media_list = Searcher().search_medias(key_word=second_search_name,
-                                              filter_args=filter_args,
-                                              match_media=media_info,
-                                              in_from=SearchType.WEB)
+        _process.start(ProgressKey.Search)
+        _process.update(ptype=ProgressKey.Search,
+                        text="%s 未搜索到资源,尝试通过 %s 重新搜索 ..." % (
+                            first_search_name, second_search_name))
+        log.info("【Searcher】%s 未搜索到资源,尝试通过 %s 重新搜索 ..." % (first_search_name, second_search_name))
+        media_list = _searcher.search_medias(key_word=second_search_name,
+                                             filter_args=filter_args,
+                                             match_media=media_info,
+                                             in_from=SearchType.WEB)
     # 清空缓存结果
-    dbhepler = DbHelper()
-    dbhepler.delete_all_search_torrents()
+    _searcher.delete_all_search_torrents()
     # 结束进度
-    search_process.end('search')
+    _process.end(ProgressKey.Search)
     if len(media_list) == 0:
-        log.info("【Web】%s 未检索到任何资源" % content)
-        return 1, "%s 未检索到任何资源" % content
+        log.info("【Web】%s 未搜索到任何资源" % content)
+        return 1, "%s 未搜索到任何资源" % content
     else:
-        log.info("【Web】共检索到 %s 个有效资源" % len(media_list))
+        log.info("【Web】共搜索到 %s 个有效资源" % len(media_list))
         # 插入数据库
         media_list = sorted(media_list, key=lambda x: "%s%s%s" % (str(x.res_order).rjust(3, '0'),
                                                                   str(x.site_order).rjust(3, '0'),
                                                                   str(x.seeders).rjust(10, '0')), reverse=True)
-        dbhepler.insert_search_results(media_items=media_list,
-                                       ident_flag=ident_flag,
-                                       title=content)
+        _searcher.insert_search_results(media_items=media_list,
+                                        ident_flag=ident_flag,
+                                        title=content)
         return 0, ""
 
 
 def search_media_by_message(input_str, in_from: SearchType, user_id, user_name=None):
     """
-    输入字符串，解析要求并进行资源检索
+    输入字符串，解析要求并进行资源搜索
     :param input_str: 输入字符串，可以包括标题、年份、季、集的信息，使用空格隔开
     :param in_from: 搜索下载的请求来源
     :param user_id: 需要发送消息的，传入该参数，则只给对应用户发送交互消息
@@ -180,8 +182,10 @@ def search_media_by_message(input_str, in_from: SearchType, user_id, user_name=N
     global SEARCH_MEDIA_CACHE
 
     if not input_str:
-        log.info("【Searcher】检索关键字有误！")
+        log.info("【Searcher】搜索关键字有误！")
         return
+    else:
+        input_str = str(input_str).strip()
     # 如果是数字，表示选择项
     if input_str.isdigit() and int(input_str) < 10:
         # 获取之前保存的可选项
@@ -229,82 +233,69 @@ def search_media_by_message(input_str, in_from: SearchType, user_id, user_name=N
                         media_info=media_info,
                         user_id=user_id,
                         user_name=user_name)
-    # 接收到文本，开始查询可能的媒体信息供选择
+    # 接收到文本
     else:
         if input_str.startswith("订阅"):
+            # 订阅
             SEARCH_MEDIA_TYPE[user_id] = "SUBSCRIBE"
             input_str = re.sub(r"订阅[:：\s]*", "", input_str)
-        elif input_str.startswith("http") or input_str.startswith("magnet:"):
+        elif input_str.startswith("http"):
+            # 下载链接
             SEARCH_MEDIA_TYPE[user_id] = "DOWNLOAD"
+        elif OpenAiHelper().get_state() \
+                and not input_str.startswith("搜索") \
+                and not input_str.startswith("下载"):
+            # 开启ChatGPT时，不以订阅、搜索、下载开头的均为聊天模式
+            SEARCH_MEDIA_TYPE[user_id] = "ASK"
         else:
+            # 搜索
             input_str = re.sub(r"(搜索|下载)[:：\s]*", "", input_str)
             SEARCH_MEDIA_TYPE[user_id] = "SEARCH"
 
         # 下载链接
         if SEARCH_MEDIA_TYPE[user_id] == "DOWNLOAD":
-            if input_str.startswith("http"):
-                # 检查是不是有这个站点
-                site_info = Sites().get_sites(siteurl=input_str)
-                # 偿试下载种子文件
-                filepath, content, retmsg = Torrent().save_torrent_file(
-                    url=input_str,
-                    cookie=site_info.get("cookie"),
-                    ua=site_info.get("ua"),
-                    proxy=site_info.get("proxy")
-                )
-                # 下载种子出错
-                if not content and retmsg:
-                    Message().send_channel_msg(channel=in_from,
-                                               title=retmsg,
-                                               user_id=user_id)
-                    return
-                if isinstance(content, str):
-                    # 磁力链
-                    title = Torrent().get_magnet_title(content)
-                    if title:
-                        meta_info = Media().get_media_info(title=title)
-                    else:
-                        meta_info = MetaInfo(title="磁力链接")
-                        meta_info.org_string = content
-                    meta_info.set_torrent_info(
-                        enclosure=content,
-                        download_volume_factor=0,
-                        upload_volume_factor=1
-                    )
-                else:
-                    # 识别文件名
-                    filename = os.path.basename(filepath)
-                    # 识别
-                    meta_info = Media().get_media_info(title=filename)
-                    meta_info.set_torrent_info(
-                        enclosure=input_str
-                    )
-            else:
-                # 磁力链
-                filepath = None
-                title = Torrent().get_magnet_title(input_str)
-                if title:
-                    meta_info = Media().get_media_info(title=title)
-                else:
-                    meta_info = MetaInfo(title="磁力链接")
-                    meta_info.org_string = input_str
-                meta_info.set_torrent_info(
-                    enclosure=input_str,
-                    download_volume_factor=0,
-                    upload_volume_factor=1
-                )
-            # 开始下载
-            meta_info.user_name = user_name
-            state, retmsg = Downloader().download(media_info=meta_info,
-                                                  torrent_file=filepath)
-            if state:
-                Message().send_download_message(in_from=in_from,
-                                                can_item=meta_info)
-            else:
+            # 检查是不是有这个站点
+            site_info = Sites().get_sites(siteurl=input_str)
+            # 偿试下载种子文件
+            filepath, content, retmsg = Torrent().save_torrent_file(
+                url=input_str,
+                cookie=site_info.get("cookie"),
+                ua=site_info.get("ua"),
+                proxy=site_info.get("proxy")
+            )
+            # 下载种子出错
+            if (not content or not filepath) and retmsg:
                 Message().send_channel_msg(channel=in_from,
-                                           title=f"添加下载失败，{retmsg}",
+                                           title=retmsg,
                                            user_id=user_id)
-
+                return
+            # 识别文件名
+            filename = os.path.basename(filepath)
+            # 识别
+            meta_info = Media().get_media_info(title=filename)
+            if not meta_info:
+                Message().send_channel_msg(channel=in_from,
+                                           title="无法识别种子文件名！",
+                                           user_id=user_id)
+                return
+            # 开始下载
+            meta_info.set_torrent_info(enclosure=input_str)
+            Downloader().download(media_info=meta_info,
+                                  torrent_file=filepath,
+                                  in_from=in_from,
+                                  user_name=user_name)
+        # 聊天
+        elif SEARCH_MEDIA_TYPE[user_id] == "ASK":
+            # 调用ChatGPT Api
+            answer = OpenAiHelper().get_answer(text=input_str,
+                                               userid=user_id)
+            if not answer:
+                answer = "ChatGTP出错了，请检查OpenAI API Key是否正确，如需搜索电影/电视剧，请发送 搜索或下载 + 名称"
+            # 发送消息
+            Message().send_channel_msg(channel=in_from,
+                                       title="",
+                                       text=str(answer).strip(),
+                                       user_id=user_id)
         # 搜索或订阅
         else:
             # 获取字符串中可能的RSS站点列表
@@ -423,9 +414,9 @@ def __search_media(in_from, media_info, user_id, user_name=None):
     if exist_flag:
         return
 
-    # 开始检索
+    # 开始搜索
     Message().send_channel_msg(channel=in_from,
-                               title="开始检索 %s ..." % media_info.title,
+                               title="开始搜索 %s ..." % media_info.title,
                                user_id=user_id)
     search_result, no_exists, search_count, download_count = Searcher().search_one_media(media_info=media_info,
                                                                                          in_from=in_from,
@@ -468,30 +459,21 @@ def __rss_media(in_from, media_info, user_id=None, state='D', user_name=None):
     开始添加订阅和发送消息
     """
     # 添加订阅
-    if media_info.douban_id:
-        code, msg, media_info = Subscribe().add_rss_subscribe(mtype=media_info.type,
-                                                              name=media_info.title,
-                                                              year=media_info.year,
-                                                              season=media_info.begin_season,
-                                                              mediaid=f"DB:{media_info.douban_id}",
-                                                              state=state,
-                                                              rss_sites=media_info.rss_sites,
-                                                              search_sites=media_info.search_sites)
-    else:
-        code, msg, media_info = Subscribe().add_rss_subscribe(mtype=media_info.type,
-                                                              name=media_info.title,
-                                                              year=media_info.year,
-                                                              season=media_info.begin_season,
-                                                              mediaid=media_info.tmdb_id,
-                                                              state=state,
-                                                              rss_sites=media_info.rss_sites,
-                                                              search_sites=media_info.search_sites)
+    mediaid = f"DB:{media_info.douban_id}" if media_info.douban_id else media_info.tmdb_id
+    code, msg, media_info = Subscribe().add_rss_subscribe(mtype=media_info.type,
+                                                          name=media_info.title,
+                                                          year=media_info.year,
+                                                          channel=RssType.Auto,
+                                                          season=media_info.begin_season,
+                                                          mediaid=mediaid,
+                                                          state=state,
+                                                          rss_sites=media_info.rss_sites,
+                                                          search_sites=media_info.search_sites,
+                                                          download_setting=media_info.download_setting,
+                                                          in_from=in_from,
+                                                          user_name=user_name)
     if code == 0:
         log.info("【Web】%s %s 已添加订阅" % (media_info.type.value, media_info.get_title_string()))
-        if in_from in Message().get_search_types():
-            media_info.user_name = user_name
-            Message().send_rss_success_message(in_from=in_from,
-                                               media_info=media_info)
     else:
         if in_from in Message().get_search_types():
             log.info("【Web】%s 添加订阅失败：%s" % (media_info.title, msg))

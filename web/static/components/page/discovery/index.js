@@ -30,11 +30,6 @@ export class PageDiscovery extends CustomElement {
         },
         {
           type: "MOV",
-          title:"豆瓣最新电影",
-          subtype :"dbnm",
-        },
-        {
-          type: "MOV",
           title:"豆瓣热门电影",
           subtype :"dbhm",
         },
@@ -45,8 +40,18 @@ export class PageDiscovery extends CustomElement {
         },
         {
           type: "TV",
-          title:"豆瓣热门电视剧",
+          title:"豆瓣热门剧集",
           subtype :"dbht",
+        },
+        {
+          type: "TV",
+          title:"豆瓣热门动漫",
+          subtype :"dbdh",
+        },
+        {
+          type: "TV",
+          title:"豆瓣热门综艺",
+          subtype :"dbzy",
         },
         {
           type: "TV",
@@ -119,6 +124,15 @@ export class PageDiscovery extends CustomElement {
     }
   }
 
+  _fix_card_image_url(url) {
+    if (!url || url.toLowerCase() === "none") {
+      return "";
+    }
+    var regex = /qnmob3/i;
+    var fixedUrl = url.replace(regex, 'img1');
+    return fixedUrl;
+  }
+
   render() {
     return html`
       <div class="container-xl">
@@ -139,7 +153,7 @@ export class PageDiscovery extends CustomElement {
                   card-tmdbid=${card.id}
                   card-mediatype=${card.type}
                   card-showsub=1
-                  card-image=${card.image}
+                  card-image=${'/img?url='+this._fix_card_image_url(card.image)}
                   card-fav=${card.fav}
                   card-vote=${card.vote}
                   card-year=${card.year}

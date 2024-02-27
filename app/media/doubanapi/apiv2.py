@@ -6,10 +6,12 @@ from datetime import datetime
 from functools import lru_cache
 from random import choice
 from urllib import parse
+import json
+import re
 
 import requests
 
-from app.utils import RequestUtils
+from app.utils import RequestUtils, StringUtils
 from app.utils.commons import singleton
 
 
@@ -132,6 +134,10 @@ class DoubanApi(object):
         "music_interests": "/music/%s/interests",
         "music_reviews": "/music/%s/reviews",
         "music_recommendations": "/music/%s/recommendations",
+
+        # doulist
+        "doulist": "/doulist/",
+        "doulist_items": "/doulist/%s/items",
     }
 
     _user_agents = [
@@ -140,7 +146,7 @@ class DoubanApi(object):
         "api-client/1 com.douban.frodo/7.1.0(205) Android/29 product/perseus vendor/Xiaomi model/Mi MIX 3  rom/miui6  network/wifi  platform/mobile nd/1",
         "api-client/1 com.douban.frodo/7.3.0(207) Android/22 product/MI 9 vendor/Xiaomi model/MI 9 brand/Android  rom/miui6  network/wifi platform/mobile nd/1"]
     _api_secret_key = "bf7dddc7c9cfe6f7"
-    _api_key = "0dad551ec0f84ed02907ff5c42e8ec70"
+    _api_key = "054022eaeae0b00e0fc068c0c0a2102a"
     _base_url = "https://frodo.douban.com/api/v2"
     _session = requests.Session()
 
@@ -166,10 +172,19 @@ class DoubanApi(object):
         ts = params.pop('_ts', int(datetime.strftime(datetime.now(), '%Y%m%d')))
         params.update({'os_rom': 'android', 'apiKey': cls._api_key, '_ts': ts, '_sig': cls.__sign(url=req_url, ts=ts)})
 
-        headers = {'User-Agent': choice(cls._user_agents)}
+        headers = {'User-Agent': 'MicroMessenger/',
+                   'Referer': 'https://servicewechat.com/wx2f9b06c1de1ccfca/91/page-frame.html'}
         resp = RequestUtils(headers=headers, session=cls._session).get_res(url=req_url, params=params)
 
-        return resp.json() if resp else None
+        resp_json = resp.json() if resp else {}
+        resp_json_str = json.dumps(resp_json)
+        if StringUtils.is_string_and_not_empty(resp_json_str):
+            resp_json_str = re.sub(r'qnmob\d+', 'img1', resp_json_str)
+
+        try:
+            return json.loads(resp_json_str)
+        except json.JSONDecodeError as e:
+            return {}
 
     def search(self, keyword, start=0, count=20, ts=datetime.strftime(datetime.now(), '%Y%m%d')):
         return self.__invoke(self._urls["search"], q=keyword, start=start, count=count, _ts=ts)
@@ -228,10 +243,10 @@ class DoubanApi(object):
     def movie_top250(self, start=0, count=20, ts=datetime.strftime(datetime.now(), '%Y%m%d')):
         return self.__invoke(self._urls["movie_top250"], start=start, count=count, _ts=ts)
 
-    def movie_recommend(self, tags='', sort='T', start=0, count=20, ts=datetime.strftime(datetime.now(), '%Y%m%d')):
+    def movie_recommend(self, tags='', sort='R', start=0, count=20, ts=datetime.strftime(datetime.now(), '%Y%m%d')):
         return self.__invoke(self._urls["movie_recommend"], tags=tags, sort=sort, start=start, count=count, _ts=ts)
 
-    def tv_recommend(self, tags='', sort='T', start=0, count=20, ts=datetime.strftime(datetime.now(), '%Y%m%d')):
+    def tv_recommend(self, tags='', sort='R', start=0, count=20, ts=datetime.strftime(datetime.now(), '%Y%m%d')):
         return self.__invoke(self._urls["tv_recommend"], tags=tags, sort=sort, start=start, count=count, _ts=ts)
 
     def tv_chinese_best_weekly(self, start=0, count=20, ts=datetime.strftime(datetime.now(), '%Y%m%d')):
@@ -239,3 +254,122 @@ class DoubanApi(object):
 
     def tv_global_best_weekly(self, start=0, count=20, ts=datetime.strftime(datetime.now(), '%Y%m%d')):
         return self.__invoke(self._urls["tv_global_best_weekly"], start=start, count=count, _ts=ts)
+
+    def doulist_detail(self, subject_id):
+        """
+        豆列详情
+        :param subject_id: 豆列id
+        :return:
+        {
+            "is_follow": false,
+            "screenshot_title": "分享海报",
+            "playable_count": 1226,
+            "screenshot_url": "douban:\/\/partial.douban.com\/screenshot\/doulist\/13712178\/_content",
+            "create_time": "2014-10-05 10:41:22",
+            "owner": {
+                "kind": "user",
+                "name": "依然饭特稀",
+                "url": "https:\/\/www.douban.com\/people\/56698183\/",
+                "uri": "douban:\/\/douban.com\/user\/56698183",
+                "avatar": "https://img2.doubanio.com\/icon\/up56698183-12.jpg",
+                "is_club": false,
+                "type": "user",
+                "id": "56698183",
+                "uid": "yrftx"
+            },
+            "screenshot_type": "rexxar",
+            "id": "13712178",
+            "category": "movie",
+            "is_merged_cover": false,
+            "title": "评价人数超过十万的电影",
+            "is_subject_selection": false,
+            "followers_count": 53081,
+            "is_private": false,
+            "item_abstracts": [],
+            "type": "doulist",
+            "update_time": "2023-04-22 22:19:48",
+            "list_type": "ugc_doulist",
+            "tags": [],
+            "syncing_note": null,
+            "cover_url": "https://img9.doubanio.com\/view\/elanor_image\/raw\/public\/91314905.jpg",
+            "header_bg_image": "",
+            "doulist_type": "",
+            "done_count": 0,
+            "desc": "谢谢大家的关注和点赞，不过我更希望大家能在留言板上补充遗漏。\r\n看腻了豆瓣的评分排序，不如试试评价人数排序。评价人数并不代表作品的优劣，但是它起码说明了作品的存在感。这不一定是选电影最好的方法，却一定是选电影风险最小的方法。\r\n欢迎关注我关于读书的两个豆列： \r\n豆瓣评价人数超过一万的外文书籍 \r\nhttp:\/\/www.douban.com\/doulist\/37912871\/ \r\n豆瓣评价人数超过一万的中文书籍\r\nhttp:\/\/www.douban.com\/doulist\/36708212\/",
+            "items_count": 1453,
+            "wechat_timeline_share": "url",
+            "url": "https:\/\/www.douban.com\/doulist\/13712178\/",
+            "is_sys_private": false,
+            "uri": "douban:\/\/douban.com\/doulist\/13712178",
+            "sharing_url": "https:\/\/www.douban.com\/doulist\/13712178\/"
+        }
+        """
+        return self.__invoke(self._urls["doulist"] + subject_id)
+
+    def doulist_items(self, subject_id, start=0, count=20, ts=datetime.strftime(datetime.now(), '%Y%m%d')):
+        """
+        豆列列表
+        :param subject_id: 豆列id
+        :param start: 开始
+        :param count: 数量
+        :param ts: 时间戳
+        :return:
+        {
+            "count": 3,
+            "start": 0,
+            "total": 1453,
+            "items": [{
+                "comment": "",
+                "rating": {
+                    "count": 2834097,
+                    "max": 10,
+                    "star_count": 5.0,
+                    "value": 9.7
+                },
+                "subtitle": "1994 \/ 美国 \/ 剧情 犯罪 \/ 弗兰克·德拉邦特 \/ 蒂姆·罗宾斯 摩根·弗里曼",
+                "title": "肖申克的救赎",
+                "url": "https:\/\/movie.douban.com\/subject\/1292052\/",
+                "target_id": "1292052",
+                "uri": "douban:\/\/douban.com\/movie\/1292052",
+                "cover_url": "https:\/\/qnmob3.doubanio.com\/view\/photo\/m_ratio_poster\/public\/p480747492.jpg?imageView2\/2\/q\/80\/w\/300\/h\/300\/format\/jpg",
+                "create_time": "2014-10-05 10:41:51",
+                "type": "movie",
+                "id": "19877287"
+            }, {
+                "comment": "",
+                "rating": {
+                    "count": 2255839,
+                    "max": 10,
+                    "star_count": 4.5,
+                    "value": 9.4
+                },
+                "subtitle": "1994 \/ 法国 美国 \/ 剧情 动作 犯罪 \/ 吕克·贝松 \/ 让·雷诺 娜塔莉·波特曼",
+                "title": "这个杀手不太冷",
+                "url": "https:\/\/movie.douban.com\/subject\/1295644\/",
+                "target_id": "1295644",
+                "uri": "douban:\/\/douban.com\/movie\/1295644",
+                "cover_url": "https:\/\/qnmob3.doubanio.com\/view\/photo\/m_ratio_poster\/public\/p511118051.jpg?imageView2\/2\/q\/80\/w\/300\/h\/300\/format\/jpg",
+                "create_time": "2014-10-05 10:42:34",
+                "type": "movie",
+                "id": "19877286"
+            }, {
+                "comment": "",
+                "rating": {
+                    "count": 2198702,
+                    "max": 10,
+                    "star_count": 4.5,
+                    "value": 9.4
+                },
+                "subtitle": "2001 \/ 日本 \/ 剧情 动画 奇幻 \/ 宫崎骏 \/ 柊瑠美 入野自由",
+                "title": "千与千寻",
+                "url": "https:\/\/movie.douban.com\/subject\/1291561\/",
+                "target_id": "1291561",
+                "uri": "douban:\/\/douban.com\/movie\/1291561",
+                "cover_url": "https:\/\/qnmob3.doubanio.com\/view\/photo\/m_ratio_poster\/public\/p2557573348.jpg?imageView2\/2\/q\/80\/w\/300\/h\/300\/format\/jpg",
+                "create_time": "2014-10-05 10:47:12",
+                "type": "movie",
+                "id": "19877280"
+            }]
+        }
+        """
+        return self.__invoke(self._urls["doulist_items"] % subject_id, start=start, count=count, _ts=ts)
