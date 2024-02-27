@@ -4,11 +4,13 @@ import platform
 import shutil
 import subprocess
 
-from app.utils.path_utils import PathUtils
-from app.utils.exception_utils import ExceptionUtils
-from app.utils.types import OsType
-from config import WEBDRIVER_PATH
+import psutil
 
+from app.utils.exception_utils import ExceptionUtils
+from app.utils.path_utils import PathUtils
+from app.utils.types import OsType
+from config import Config, WEBDRIVER_PATH
+from math import ceil
 
 class SystemUtils:
 
@@ -21,22 +23,6 @@ class SystemUtils:
             return st
         else:
             return None
-
-    @staticmethod
-    def get_used_of_partition(path):
-        """
-        获取系统存储空间占用信息
-        """
-        if not path:
-            return 0, 0
-        if not os.path.exists(path):
-            return 0, 0
-        try:
-            total_b, used_b, free_b = shutil.disk_usage(path)
-            return used_b, total_b
-        except Exception as e:
-            ExceptionUtils.exception_traceback(e)
-            return 0, 0
 
     @staticmethod
     def get_system():
@@ -53,14 +39,6 @@ class SystemUtils:
             return OsType.MACOS
         else:
             return OsType.LINUX
-
-    @staticmethod
-    def get_free_space_gb(folder):
-        """
-        计算目录剩余空间大小
-        """
-        total_b, used_b, free_b = shutil.disk_usage(folder)
-        return free_b / 1024 / 1024 / 1024
 
     @staticmethod
     def get_local_time(utc_time_str):
@@ -83,8 +61,10 @@ class SystemUtils:
         """
         if not pname:
             return False
-        text = subprocess.Popen('ps -ef | grep -v grep | grep %s' % pname, shell=True).communicate()
-        return True if text else False
+        for process in psutil.process_iter():
+            if process.name() == pname:
+                return True
+        return False
 
     @staticmethod
     def execute(cmd):
@@ -127,6 +107,25 @@ class SystemUtils:
             return None
         else:
             return WEBDRIVER_PATH.get(SystemUtils.get_system().value)
+
+    @staticmethod
+    def chmod755(filePath):
+        if not os.path.exists(filePath):
+            return
+        if not SystemUtils.is_docker() \
+            and not SystemUtils.is_macos() \
+            and not SystemUtils.is_synology():
+            return
+        os.chmod(filePath, 0o755)
+
+    @staticmethod
+    def get_download_webdriver_path():
+        download_webdriver_path = os.path.join(Config().get_config_path(), "webdriver")
+        try:
+            os.makedirs(download_webdriver_path, exist_ok=True)
+        except OSError as e:
+            pass
+        return download_webdriver_path
 
     @staticmethod
     def copy(src, dest):
@@ -322,3 +321,124 @@ class SystemUtils:
                         })
 
         return ret_files
+
+    @staticmethod
+    def get_free_space(path):
+        """
+        获取指定路径的剩余空间（单位：GB）
+        """
+        if not os.path.exists(path):
+            return 0.0
+        return psutil.disk_usage(path).free / 1024 / 1024 / 1024
+
+    @staticmethod
+    def get_total_space(path):
+        """
+        获取指定路径的总空间（单位：GB）
+        """
+        if not os.path.exists(path):
+            return 0.0
+        return psutil.disk_usage(path).total / 1024 / 1024 / 1024
+
+    @staticmethod
+    def calculate_space_usage(dir_list):
+        """
+        计算多个目录的总可用空间/剩余空间（单位：GB），并去除重复磁盘
+        """
+        if not dir_list:
+            return 0.0
+        if not isinstance(dir_list, list):
+            dir_list = [dir_list]
+        # 存储不重复的磁盘
+        disk_set = set()
+        # 存储总剩余空间
+        total_free_space = 0.0
+        # 存储总空间
+        total_space = 0.0
+        for dir_path in dir_list:
+            if not dir_path:
+                continue
+            if not os.path.exists(dir_path):
+                continue
+            # 获取目录所在磁盘
+            if os.name == "nt":
+                disk = os.path.splitdrive(dir_path)[0]
+            else:
+                disk = os.stat(dir_path).st_dev
+            # 如果磁盘未出现过，则计算其剩余空间并加入总剩余空间中
+            if disk not in disk_set:
+                disk_set.add(disk)
+                total_space += SystemUtils.get_total_space(dir_path)
+                total_free_space += SystemUtils.get_free_space(dir_path)
+        return total_space, total_free_space
+
+    @staticmethod
+    def get_all_processes():
+
+        def seconds_to_str(seconds):
+            hours, remainder = divmod(seconds, 3600)
+            minutes = remainder // 60
+            ret_str = f'{hours}小时{minutes}分钟' if hours > 0 else f'{minutes}分钟'
+            return ret_str
+
+        processes = []
+        for proc in psutil.process_iter(['pid', 'name', 'create_time', 'memory_info', 'status']):
+            try:
+                if proc.status() != psutil.STATUS_ZOMBIE:
+                    runtime = datetime.datetime.now() - datetime.datetime.fromtimestamp(
+                        int(getattr(proc, 'create_time', 0)()))
+                    runtime_str = seconds_to_str(runtime.seconds)
+                    mem_info = getattr(proc, 'memory_info', None)()
+                    if mem_info is not None:
+                        mem_mb = round(mem_info.rss / (1024 * 1024), 1)
+                        processes.append({
+                            "id": proc.pid, "name": proc.name(), "time": runtime_str, "memory": mem_mb
+                        })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        return processes
+
+    # 缩略路径
+    @staticmethod
+    def shorten_path(path, ignore = 'center',  max_levels = 2, max_name = 40):
+        """缩略路径
+
+        Args:
+            path (str): 原始路径
+            ignore (str, optional): 忽略的位置，忽略左侧为'left'，忽略右侧为'right'. 默认忽略中间为'center'.
+            max_levels (int, optional): 最大的路径层级，不包含根目录和文件的目录数量. 默认为2.
+            max_name (int, optional): 最大的文件名长度，超长则忽略中间名称. 默认为40.
+
+        Returns:
+            str: 缩略后的路径
+        """
+        parts = path.split(os.path.sep)  # 使用操作系统的路径分隔符来拆分路径
+        root = parts[0]
+        parts = parts[1:]
+        file = ""
+        if os.path.isfile(path):
+            file = parts[-1] if len(parts[-1])<= max_name else parts[-1][:(max_name-3)//2]+'...'+parts[-1][-(max_name-3)//2:]
+            parts = parts[:-1]  # 如果路径是文件，去掉最后一个部分（文件名）
+        if len(parts) <= max_levels:
+            return path  # 如果路径层次小于等于max_levels，保留原始路径
+        else:
+            shortened_parts = []
+            if ignore == 'left':
+                shortened_parts.append('...')
+                for i in range(-max_levels, 0):
+                    shortened_parts.append(parts[i])                    
+            elif ignore == 'right':
+                shortened_parts.append(root) 
+                for i in range(max_levels):
+                    shortened_parts.append(parts[i])                    
+                shortened_parts.append('...')
+            else:
+                shortened_parts.append(root) 
+                for i in range(max_levels // 2):
+                    shortened_parts.append(parts[i])                    
+                shortened_parts.append('...')     
+                for i in range(-ceil(max_levels/2), 0):
+                    shortened_parts.append(parts[i])                                      
+            if file:
+                shortened_parts.append(file) # 文件则添加名称
+            return os.path.sep.join(shortened_parts)

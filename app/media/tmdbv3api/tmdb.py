@@ -22,7 +22,8 @@ class TMDb(object):
     TMDB_CACHE_ENABLED = "TMDB_CACHE_ENABLED"
     TMDB_PROXIES = "TMDB_PROXIES"
     TMDB_DOMAIN = "TMDB_DOMAIN"
-    REQUEST_CACHE_MAXSIZE = 256
+    TMDB_INCLUDE_ADULT = "TMDB_INCLUDE_ADULT"
+    REQUEST_CACHE_MAXSIZE = 512
 
     def __init__(self, obj_cached=True, session=None):
         self._session = requests.Session() if session is None else session
@@ -30,7 +31,7 @@ class TMDb(object):
         self._reset = None
         self.obj_cached = obj_cached
         if os.environ.get(self.TMDB_LANGUAGE) is None:
-            os.environ[self.TMDB_LANGUAGE] = "zh-CN"
+            os.environ[self.TMDB_LANGUAGE] = "zh"
         if not os.environ.get(self.TMDB_DOMAIN):
             os.environ[self.TMDB_DOMAIN] = "https://api.themoviedb.org/3"
 
@@ -56,14 +57,7 @@ class TMDb(object):
 
     @domain.setter
     def domain(self, domain):
-        if domain:
-            if not str(domain).startswith('http'):
-                domain = "https://%s" % domain
-            if not str(domain).endswith('/3'):
-                domain = "%s/3" % domain
-            os.environ[self.TMDB_DOMAIN] = str(domain)
-        else:
-            os.environ[self.TMDB_DOMAIN] = ''
+        os.environ[self.TMDB_DOMAIN] = str(domain or '')
 
     @property
     def proxies(self):
@@ -93,6 +87,17 @@ class TMDb(object):
     @language.setter
     def language(self, language):
         os.environ[self.TMDB_LANGUAGE] = language
+
+    @property
+    def include_adult(self):
+        if os.environ.get(self.TMDB_INCLUDE_ADULT) == "True" or os.environ.get(self.TMDB_INCLUDE_ADULT) == True:
+            return "true"
+        else:
+            return "false"
+
+    @include_adult.setter
+    def include_adult(self, include_adult):
+        os.environ[self.TMDB_INCLUDE_ADULT] = str(include_adult)
 
     @property
     def wait_on_rate_limit(self):
@@ -150,10 +155,11 @@ class TMDb(object):
         if self.api_key is None or self.api_key == "":
             raise TMDbException("No API key found.")
 
-        url = "%s%s?api_key=%s&%s&language=%s" % (
+        url = "%s%s?api_key=%s&include_adult=%s&%s&language=%s" % (
             self.domain,
             action,
             self.api_key,
+            self.include_adult,
             append_to_response,
             self.language,
         )

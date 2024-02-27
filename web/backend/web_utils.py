@@ -1,8 +1,10 @@
+from functools import lru_cache
+
 import cn2an
 
 from app.media import Media, Bangumi, DouBan
 from app.media.meta import MetaInfo
-from app.utils import StringUtils, ExceptionUtils, SystemUtils, RequestUtils
+from app.utils import StringUtils, ExceptionUtils, SystemUtils, RequestUtils, IpUtils
 from app.utils.types import MediaType
 from config import Config
 from version import APP_VERSION
@@ -15,16 +17,21 @@ class WebUtils:
         """
         根据IP址查询真实地址
         """
+        if not IpUtils.is_ipv4(ip):
+            return ""
         url = 'https://sp0.baidu.com/8aQDcjqpAAV3otqbppnN2DJv/api.php?co=&resource_id=6006&t=1529895387942&ie=utf8' \
               '&oe=gbk&cb=op_aladdin_callback&format=json&tn=baidu&' \
               'cb=jQuery110203920624944751099_1529894588086&_=1529894588088&query=%s' % ip
-        r = RequestUtils().get_res(url)
-        r.encoding = 'gbk'
-        html = r.text
         try:
-            c1 = html.split('location":"')[1]
-            c2 = c1.split('","')[0]
-            return c2
+            r = RequestUtils().get_res(url)
+            if r:
+                r.encoding = 'gbk'
+                html = r.text
+                c1 = html.split('location":"')[1]
+                c2 = c1.split('","')[0]
+                return c2
+            else:
+                return ""
         except Exception as err:
             ExceptionUtils.exception_traceback(err)
             return ""
@@ -45,22 +52,26 @@ class WebUtils:
         获取最新版本号
         """
         try:
+            releases_update_only = Config().get_config("app").get("releases_update_only")
             version_res = RequestUtils(proxies=Config().get_proxies()).get_res(
-                "https://api.github.com/repos/jxxghp/nas-tools/releases/latest")
+                "https://api.github.com/repos/hsuyelin/nas-tools/releases/latest")
             commit_res = RequestUtils(proxies=Config().get_proxies()).get_res(
-                "https://api.github.com/repos/jxxghp/nas-tools/commits/master")
+                "https://api.github.com/repos/hsuyelin/nas-tools/commits/master")
             if version_res and commit_res:
                 ver_json = version_res.json()
                 commit_json = commit_res.json()
-                version = f"{ver_json['tag_name']} {commit_json['sha'][:7]}"
+                if releases_update_only:
+                    version = f"{ver_json['tag_name']}"
+                else:
+                    version = f"{ver_json['tag_name']} {commit_json['sha'][:7]}"
                 url = ver_json["html_url"]
-                return version, url, True
+                return version, url
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
-        return None, None, False
+        return None, None
 
     @staticmethod
-    def get_mediainfo_from_id(mtype, mediaid):
+    def get_mediainfo_from_id(mtype, mediaid, wait=False):
         """
         根据TMDB/豆瓣/BANGUMI获取媒体信息
         """
@@ -70,12 +81,15 @@ class WebUtils:
         if str(mediaid).startswith("DB:"):
             # 豆瓣
             doubanid = mediaid[3:]
-            info = DouBan().get_douban_detail(doubanid=doubanid, mtype=mtype)
+            info = DouBan().get_douban_detail(doubanid=doubanid, mtype=mtype, wait=wait)
             if not info:
                 return None
             title = info.get("title")
             original_title = info.get("original_title")
             year = info.get("year")
+            # 支持自动识别类型
+            if not mtype:
+                mtype = MediaType.TV if info.get("episodes_count") else MediaType.MOVIE
             if original_title:
                 media_info = Media().get_media_info(title=f"{original_title} {year}",
                                                     mtype=mtype,
@@ -155,3 +169,42 @@ class WebUtils:
                     tmp_info.title = "%s 第%s集" % (tmp_info.title, meta_info.begin_episode)
                 medias.append(tmp_info)
         return medias
+
+    @staticmethod
+    def get_page_range(current_page, total_page):
+        """
+        计算分页范围
+        """
+        if total_page <= 5:
+            StartPage = 1
+            EndPage = total_page
+        else:
+            if current_page <= 3:
+                StartPage = 1
+                EndPage = 5
+            elif current_page >= total_page - 2:
+                StartPage = total_page - 4
+                EndPage = total_page
+            else:
+                StartPage = current_page - 2
+                if total_page > current_page + 2:
+                    EndPage = current_page + 2
+                else:
+                    EndPage = total_page
+        return range(StartPage, EndPage + 1)
+
+    @staticmethod
+    @lru_cache(maxsize=128)
+    def request_cache(url):
+        """
+        带缓存的请求
+        """
+        if url.find('douban'):
+            ret = RequestUtils(referer="https://movie.douban.com").get_res(url)
+        else:
+            ret = RequestUtils().get_res(url)
+        if ret:
+            return ret.content
+        
+        # 避免 lru 缓存失败的情况，exception 不会被缓存
+        raise Exception('request failed')

@@ -1,5 +1,4 @@
-from .chrome_helper import ChromeHelper
-from .indexer_helper import IndexerHelper, IndexerConf
+from .chrome_helper import ChromeHelper, init_chrome
 from .meta_helper import MetaHelper
 from .progress_helper import ProgressHelper
 from .security_helper import SecurityHelper
@@ -9,8 +8,9 @@ from .dict_helper import DictHelper
 from .display_helper import DisplayHelper
 from .site_helper import SiteHelper
 from .ocr_helper import OcrHelper
-from .opensubtitles import OpenSubtitles
 from .words_helper import WordsHelper
 from .submodule_helper import SubmoduleHelper
-from .cookiecloud_helper import CookieCloudHelper
 from .ffmpeg_helper import FfmpegHelper
+from .redis_helper import RedisHelper
+from .rss_helper import RssHelper
+from .plugin_helper import PluginHelper

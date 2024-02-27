@@ -3,8 +3,7 @@ import threading
 from datetime import datetime
 
 from app.message.client._base import _IMessageClient
-from app.utils import RequestUtils, ExceptionUtils
-from config import DEFAULT_WECHAT_PROXY
+from app.utils import RequestUtils, ExceptionUtils, StringUtils
 
 lock = threading.Lock()
 
@@ -17,6 +16,7 @@ class WeChat(_IMessageClient):
     _expires_in = None
     _access_token_time = None
     _default_proxy = False
+    _default_proxy_url = ''
     _client_config = {}
     _corpid = None
     _corpsecret = None
@@ -38,9 +38,9 @@ class WeChat(_IMessageClient):
             self._agent_id = self._client_config.get('agentid')
             self._default_proxy = self._client_config.get('default_proxy')
         if self._default_proxy:
-            if isinstance(self._default_proxy, bool):
-                self._send_msg_url = f"{DEFAULT_WECHAT_PROXY}/cgi-bin/message/send?access_token=%s"
-                self._token_url = f"{DEFAULT_WECHAT_PROXY}/cgi-bin/gettoken?corpid=%s&corpsecret=%s"
+            if isinstance(self._default_proxy, bool) and StringUtils.is_string_and_not_empty(self._default_proxy_url):
+                self._send_msg_url = f"{self._default_proxy_url}/cgi-bin/message/send?access_token=%s"
+                self._token_url = f"{self._default_proxy_url}/cgi-bin/gettoken?corpid=%s&corpsecret=%s"
             else:
                 self._send_msg_url = f"{self._default_proxy}/cgi-bin/message/send?access_token=%s"
                 self._token_url = f"{self._default_proxy}/cgi-bin/gettoken?corpid=%s&corpsecret=%s"
@@ -80,12 +80,13 @@ class WeChat(_IMessageClient):
                 return None
         return self._access_token
 
-    def __send_message(self, title, text, user_id=None):
+    def __send_message(self, title, text, user_id=None, url=None):
         """
         发送文本消息
         :param title: 消息标题
         :param text: 消息内容
         :param user_id: 消息发送对象的ID，为空则发给所有人
+        :param url: 点击消息跳转URL
         :return: 发送状态，错误信息
         """
         if not self.__get_access_token():
@@ -95,6 +96,8 @@ class WeChat(_IMessageClient):
             conent = "%s\n%s" % (title, text.replace("\n\n", "\n"))
         else:
             conent = title
+        if url:
+            conent = f"{conent}\n\n<a href='{url}'>查看详情</a>"
         if not user_id:
             user_id = "@all"
         req_json = {
@@ -159,7 +162,7 @@ class WeChat(_IMessageClient):
         if image:
             ret_code, ret_msg = self.__send_image_message(title, text, image, url, user_id)
         else:
-            ret_code, ret_msg = self.__send_message(title, text, user_id)
+            ret_code, ret_msg = self.__send_message(title, text, user_id, url)
         return ret_code, ret_msg
 
     def send_list_msg(self, medias: list, user_id="", title="", **kwargs):
@@ -204,8 +207,8 @@ class WeChat(_IMessageClient):
         headers = {'content-type': 'application/json'}
         try:
             res = RequestUtils(headers=headers).post(message_url,
-                                                     params=json.dumps(req_json, ensure_ascii=False).encode('utf-8'))
-            if res:
+                                                     data=json.dumps(req_json, ensure_ascii=False).encode('utf-8'))
+            if res and res.status_code == 200:
                 ret_json = res.json()
                 if ret_json.get('errcode') == 0:
                     return True, ret_json.get('errmsg')
@@ -213,8 +216,10 @@ class WeChat(_IMessageClient):
                     if ret_json.get('errcode') == 42001:
                         self.__get_access_token(force=True)
                     return False, ret_json.get('errmsg')
+            elif res is not None:
+                return False, f"错误码：{res.status_code}，错误原因：{res.reason}"
             else:
-                return False, None
+                return False, "未获取到返回信息"
         except Exception as err:
             ExceptionUtils.exception_traceback(err)
             return False, str(err)

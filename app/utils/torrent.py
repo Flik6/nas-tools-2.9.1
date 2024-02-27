@@ -1,36 +1,19 @@
-import os.path
-import re
 import datetime
-from urllib.parse import quote, unquote
+import os.path
+import time
+import re
+import tempfile
+import hashlib
+from urllib.parse import unquote, urlencode, urlparse
 
-from bencode import bdecode
+import libtorrent
+from bencode import bencode, bdecode
 
+import log
+from app.utils import StringUtils
 from app.utils.http_utils import RequestUtils
+from app.utils.types import MediaType
 from config import Config
-
-# Trackers列表
-trackers = [
-    "udp://tracker.opentrackr.org:1337/announce",
-    "udp://9.rarbg.com:2810/announce",
-    "udp://opentracker.i2p.rocks:6969/announce",
-    "https://opentracker.i2p.rocks:443/announce",
-    "udp://tracker.torrent.eu.org:451/announce",
-    "udp://tracker1.bt.moack.co.kr:80/announce",
-    "udp://tracker.pomf.se:80/announce",
-    "udp://tracker.moeking.me:6969/announce",
-    "udp://tracker.dler.org:6969/announce",
-    "udp://p4p.arenabg.com:1337/announce",
-    "udp://open.stealth.si:80/announce",
-    "udp://movies.zsw.ca:6969/announce",
-    "udp://ipv4.tracker.harry.lu:80/announce",
-    "udp://explodie.org:6969/announce",
-    "udp://exodus.desync.com:6969/announce",
-    "https://tracker.nanoha.org:443/announce",
-    "https://tracker.lilithraws.org:443/announce",
-    "https://tr.burnabyhighstar.com:443/announce",
-    "http://tracker.mywaifu.best:6969/announce",
-    "http://bt.okmp3.ru:2710/announce"
-]
 
 
 class Torrent:
@@ -39,7 +22,7 @@ class Torrent:
     def __init__(self):
         self._torrent_temp_path = Config().get_temp_path()
         if not os.path.exists(self._torrent_temp_path):
-            os.makedirs(self._torrent_temp_path)
+            os.makedirs(self._torrent_temp_path, exist_ok=True)
 
     def get_torrent_info(self, url, cookie=None, ua=None, referer=None, proxy=False):
         """
@@ -98,13 +81,54 @@ class Torrent:
                 return None, None, "未下载到种子数据"
             # 解析内容格式
             if req.text and str(req.text).startswith("magnet:"):
+                # 磁力链接
                 return None, req.text, "磁力链接"
+            elif req.text and "下载种子文件" in req.text:
+                # 首次下载提示页面
+                skip_flag = False
+                try:
+                    form = re.findall(r'<form.*?action="(.*?)".*?>(.*?)</form>', req.text, re.S)
+                    if form:
+                        action = form[0][0]
+                        if not action or action == "?":
+                            action = url
+                        elif not action.startswith('http'):
+                            action = StringUtils.get_base_url(url) + action
+                        inputs = re.findall(r'<input.*?name="(.*?)".*?value="(.*?)".*?>', form[0][1], re.S)
+                        if action and inputs:
+                            data = {}
+                            for item in inputs:
+                                data[item[0]] = item[1]
+                            # 改写req
+                            req = RequestUtils(
+                                headers=ua,
+                                cookies=cookie,
+                                referer=referer,
+                                proxies=Config().get_proxies() if proxy else None
+                            ).post_res(url=action, data=data)
+                            if req and req.status_code == 200:
+                                # 检查是不是种子文件，如果不是抛出异常
+                                bdecode(req.content)
+                                # 跳过成功
+                                log.info(f"【Downloader】触发了站点首次种子下载，已自动跳过：{url}")
+                                skip_flag = True
+                            elif req is not None:
+                                log.warn(f"【Downloader】触发了站点首次种子下载，且无法自动跳过，"
+                                         f"返回码：{req.status_code}，错误原因：{req.reason}")
+                            else:
+                                log.warn(f"【Downloader】触发了站点首次种子下载，且无法自动跳过：{url}")
+                except Exception as err:
+                    log.warn(f"【Downloader】触发了站点首次种子下载，尝试自动跳过时出现错误：{str(err)}，链接：{url}")
+
+                if not skip_flag:
+                    return None, None, "种子数据有误，请确认链接是否正确，如为PT站点则需手工在站点下载一次种子"
             else:
+                # 检查是不是种子文件，如果不是仍然抛出异常
                 try:
                     bdecode(req.content)
                 except Exception as err:
                     print(str(err))
-                    return None, None, "种子数据有误，请确认链接是否正确，如为PT站点则需手工在站点下载一次种子"
+                    return None, None, "种子数据有误，请确认链接是否正确"
             # 读取种子文件名
             file_name = self.__get_url_torrent_filename(req, url)
             # 种子文件路径
@@ -116,42 +140,12 @@ class Torrent:
                 f.write(file_content)
         elif req is None:
             return None, None, "无法打开链接：%s" % url
+        elif req.status_code == 429:
+            return None, None, "触发站点流控，请稍后重试"
         else:
             return None, None, "下载种子出错，状态码：%s" % req.status_code
 
         return file_path, file_content, ""
-
-    @staticmethod
-    def convert_hash_to_magnet(hash_text, title):
-        """
-        根据hash值，转换为磁力链，自动添加tracker
-        :param hash_text: 种子Hash值
-        :param title: 种子标题
-        """
-        if not hash_text or not title:
-            return None
-        hash_text = re.search(r'[0-9a-z]+', hash_text, re.IGNORECASE)
-        if not hash_text:
-            return None
-        hash_text = hash_text.group(0)
-        ret_magnet = f'magnet:?xt=urn:btih:{hash_text}&dn={quote(title)}'
-        for tracker in trackers:
-            ret_magnet = f'{ret_magnet}&tr={quote(tracker)}'
-        return ret_magnet
-
-    @staticmethod
-    def add_trackers_to_magnet(url, title=None):
-        """
-        添加tracker和标题到磁力链接
-        """
-        if not url or not title:
-            return None
-        ret_magnet = url
-        if title and url.find("&dn=") == -1:
-            ret_magnet = f'{ret_magnet}&dn={quote(title)}'
-        for tracker in trackers:
-            ret_magnet = f'{ret_magnet}&tr={quote(tracker)}'
-        return ret_magnet
 
     @staticmethod
     def get_torrent_files(path):
@@ -213,17 +207,7 @@ class Torrent:
             file_name = unquote(url.split("/")[-1])
         else:
             file_name = str(datetime.datetime.now())
-        return file_name
-
-    @staticmethod
-    def get_magnet_title(url):
-        """
-        从磁力链接中获取标题
-        """
-        if not url:
-            return ""
-        title = re.findall(r"dn=(.+)&?", url)
-        return unquote(title[0]) if title else ""
+        return file_name.replace('/', '')
 
     @staticmethod
     def get_intersection_episodes(target, source, title):
@@ -257,3 +241,223 @@ class Torrent:
             target[title][index]["episodes"] = target_episodes
         return target
 
+    @staticmethod
+    def get_download_list(media_list, download_order):
+        """
+        对媒体信息进行排序、去重
+        """
+        if not media_list:
+            return []
+
+        # 排序函数，标题、站点、资源类型、做种数量
+        def get_sort_str(x):
+            season_len = str(len(x.get_season_list())).rjust(2, '0')
+            episode_len = str(len(x.get_episode_list())).rjust(4, '0')
+            # 排序：标题、资源类型、站点、做种、季集
+            if download_order == "seeder":
+                return "%s%s%s%s%s" % (str(x.title).ljust(100, ' '),
+                                       str(x.res_order).rjust(3, '0'),
+                                       str(x.seeders).rjust(10, '0'),
+                                       str(x.site_order).rjust(3, '0'),
+                                       "%s%s" % (season_len, episode_len))
+            else:
+                return "%s%s%s%s%s" % (str(x.title).ljust(100, ' '),
+                                       str(x.res_order).rjust(3, '0'),
+                                       str(x.site_order).rjust(3, '0'),
+                                       str(x.seeders).rjust(10, '0'),
+                                       "%s%s" % (season_len, episode_len))
+
+        # 匹配的资源中排序分组选最好的一个下载
+        # 按站点顺序、资源匹配顺序、做种人数下载数逆序排序
+        media_list = sorted(media_list, key=lambda x: get_sort_str(x), reverse=True)
+        # 控重
+        can_download_list_item = []
+        can_download_list = []
+        # 排序后重新加入数组，按真实名称控重，即只取每个名称的第一个
+        for t_item in media_list:
+            # 控重的主链是名称、年份、季、集
+            if t_item.type != MediaType.MOVIE:
+                media_name = "%s%s" % (t_item.get_title_string(),
+                                       t_item.get_season_episode_string())
+            else:
+                media_name = t_item.get_title_string()
+            if media_name not in can_download_list:
+                can_download_list.append(media_name)
+                can_download_list_item.append(t_item)
+        return can_download_list_item
+
+    @staticmethod
+    def magent2torrent(url, path, timeout=20):
+        """
+        磁力链接转种子文件
+        :param url: 磁力链接
+        :param path: 保存目录
+        :param timeout: 获取元数据超时时间
+        :return: 转换后种子路径
+        """
+
+        log.info(f"【Downloader】转换磁力链接：{url}")
+        session = libtorrent.session()
+        magnet_info = libtorrent.parse_magnet_uri(url)
+        magnet_info.save_path = path
+        handle = session.add_torrent(magnet_info)
+
+        log.debug("【Downloader】获取元数据中")
+        tout = 0
+        while not handle.status().name:
+            time.sleep(1)
+            tout += 1
+            if tout > timeout:
+                log.debug("【Downloader】元数据获取超时")
+                return None, "种子元数据获取超时"
+        session.pause()
+
+        log.debug("【Downloader】获取元数据完成")
+        tf = handle.torrent_file()
+        ti = libtorrent.torrent_info(tf)
+        torrent_file = libtorrent.create_torrent(ti)
+        torrent_file.set_comment(ti.comment())
+        torrent_file.set_creator(ti.creator())
+
+        file_path = os.path.join(path, "%s.torrent" % handle.status().name)
+
+        with open(file_path, 'wb') as f_handle:
+            f_handle.write(libtorrent.bencode(torrent_file.generate()))
+            f_handle.close()
+
+        session.remove_torrent(handle, 1)
+        log.info(f"【Downloader】转换后的种子路径：{file_path}")
+        return file_path, ""
+
+    @staticmethod
+    def _write_binary_to_temp_file(binary_data):
+        """
+        种子内容转种子文件
+        :param binary_data: 种子内容
+        :return: 转换后种子路径
+        """
+        try:
+            temp_file = tempfile.NamedTemporaryFile(delete=False)
+            temp_file.write(binary_data)
+            temp_file.close()
+            return temp_file.name
+        except Exception as e:
+            log.error(f"【Downloader】种子内容无法写入临时文件")
+            return None
+
+    @staticmethod
+    def _parse_torrent_dict(torrent_data):
+        """
+        获取种子文件的信息
+        :param torrent_data: 种子内容的二进制数据
+        :return: 种子文件的信息
+        """
+        try:
+            torrent_dict = bdecode(torrent_data)
+            return torrent_dict
+        except Exception as e:
+            log.error(f"【Downloader】无法解析种子文件内容")
+            return None
+
+    @staticmethod
+    def _create_magnet_link(torrent_dict):
+        """
+        根据种子信息生成磁力链接
+        :param torrent_dict: 种子信息
+        :return: 磁力链接
+        """
+        if torrent_dict is None:
+            return None
+        
+        magnet_info = {}
+        
+        if 'info' in torrent_dict:
+            info_hash = hashlib.sha1(bencode(torrent_dict['info'])).hexdigest()
+            magnet_info['xt'] = 'urn:btih:' + info_hash
+        
+        if 'name' in torrent_dict['info']:
+            magnet_info['dn'] = torrent_dict['info']['name']
+        
+        if 'announce' in torrent_dict:
+            magnet_info['tr'] = torrent_dict['announce']
+        
+        if 'announce-list' in torrent_dict:
+            magnet_info['tr'] = [announce[0] for announce in torrent_dict['announce-list']]
+
+        magnet_link = 'magnet:?{}'.format(urlencode(magnet_info))
+        return magnet_link
+
+    @staticmethod
+    def binary_data_to_magnet_link(binary_data):
+        """
+        根据种子内容生成磁力链接
+        :param binary_data: 种子内容
+        :return: 磁力链接
+        """
+        temp_file_path = Torrent._write_binary_to_temp_file(binary_data)
+        if not temp_file_path:
+            return None
+        
+        with open(temp_file_path, 'rb') as torrent_file:
+            torrent_data = torrent_file.read()
+            torrent_dict = Torrent._parse_torrent_dict(torrent_data)
+            magnet_link = Torrent._create_magnet_link(torrent_dict)
+            Torrent._close_and_delete_file(temp_file_path)
+            return magnet_link
+
+    @staticmethod
+    def _close_and_delete_file(file_path):
+        """
+        清理临时生成的种子文件
+        :param file_path: 种子文件路径
+        :return: 是否删除成功
+        """
+        try:
+            with open(file_path, 'r+') as file:
+                file.close()
+        except:
+            pass
+
+        try:
+            os.remove(file_path)
+            return True
+        except Exception as e:
+            return False
+
+    @staticmethod
+    def is_magnet(link):
+        """
+        判断是否是磁力
+        """
+        return link.lower().startswith("magnet:?xt=urn:btih:")
+
+    @staticmethod        
+    def maybe_torrent_url(link):
+        """
+        判断是否可能是种子url
+        """
+        try:
+            parsed = urlparse(link)
+            return bool(parsed.netloc) and parsed.scheme in ['http', 'https', 'ftp']
+        except Exception as err:
+            return False
+
+    @staticmethod
+    def format_enclosure(link):
+        """
+        格式化一个链接
+        如果是磁力链接或者为私有PT站点则直接返回
+        如果不是磁力链接看是否是种子链接，如果是则下载种子后转换为磁力链接
+        """
+        if not StringUtils.is_string_and_not_empty(link):
+            return None
+        if Torrent.is_magnet(link):
+            return link
+        if not Torrent.maybe_torrent_url(link):
+            return None
+
+        _, torrent_content, _, _, retmsg = Torrent().get_torrent_info(link)
+        if not torrent_content:
+            print(f"下载种子文件出错: {retmsg}")
+            return None
+        return torrent_content

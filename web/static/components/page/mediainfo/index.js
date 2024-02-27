@@ -15,6 +15,8 @@ export class PageMediainfo extends CustomElement {
     similar_media: { type: Array },
     // 推荐影片
     recommend_media: { type: Array },
+    // 季集
+    seasons_data: { type: Array }
   };
 
   constructor() {
@@ -22,7 +24,9 @@ export class PageMediainfo extends CustomElement {
     this.media_info = {};
     this.similar_media = [];
     this.recommend_media = [];
+    this.seasons_data = [];
     this.fav = undefined;
+    this.item_url = undefined;
   }
 
   firstUpdated() {
@@ -33,6 +37,8 @@ export class PageMediainfo extends CustomElement {
           this.media_info = ret.data;
           this.tmdbid = ret.data.tmdbid;
           this.fav = ret.data.fav;
+          this.item_url = ret.data.item_url
+          this.seasons_data = ret.data.seasons;
           // 类似
           Golbal.get_cache_or_ajax("get_recommend", "sim", { "type": this.media_type, "subtype": "sim", "tmdbid": ret.data.tmdbid, "page": 1},
             (ret) => {
@@ -65,21 +71,21 @@ export class PageMediainfo extends CustomElement {
     `);
   }
 
+  _fix_card_image_url(url) {
+    if (!url || url.toLowerCase() === "none") {
+      return "";
+    }
+    var regex = /qnmob3/i;
+    var fixedUrl = url.replace(regex, 'img1');
+    return fixedUrl;
+  }
+
   render() {
     return html`
-      <style>
-        .lit-media-info-page-bg {
-          background-color: rgb(var(--tblr-body-bg-rgb));
-        }
-        
-        .theme-light .lit-media-info-page-bg {
-          background-color: rgb(231, 235, 239);
-        }
-      </style>
       <div class="container-xl placeholder-glow page-wrapper-top-off lit-media-info-page-bg">
         <!-- 渲染媒体信息 -->
-        <div class="card rounded-0 lit-media-info-background" style="border:none;height:calc(env(safe-area-inset-top) + var(--safe-area-inset-top) + 541px);">
-          <custom-img style="border:none;height:calc(env(safe-area-inset-top) + var(--safe-area-inset-top) + 541px);"
+        <div class="card rounded-0 lit-media-info-background custom-media-info-height">
+          <custom-img class="custom-media-info-height"
             div-style="display:inline;"
             img-placeholder="0"
             img-error="0"
@@ -90,33 +96,31 @@ export class PageMediainfo extends CustomElement {
           <div class="card-img-overlay rounded-0 lit-media-info-background">
             <div class="d-md-flex flex-md-row mb-4">
               <custom-img class="d-flex justify-content-center"
-                img-class="rounded-4 object-cover lit-media-info-image"
+                img-class="rounded-3 object-cover lit-media-info-image"
                 img-error=${Object.keys(this.media_info).length === 0 ? "0" : "1"}
                 img-src=${this.media_info.image}>
               </custom-img>
               <div class="d-flex justify-content-center">
-                <div class="d-flex flex-column justify-content-end ms-2 mt-2">
-                  ${this.fav == "2"
-                  ? html`
-                    <div class="align-self-center align-self-md-start me-1 mb-1">
-                      <strong class="badge badge-pill bg-green text-white">已下载</strong>
-                    </div>`
-                  : nothing }
-                  <h1 class="align-self-center align-self-md-start display-6">
+                <div class="d-flex flex-column justify-content-end div-media-detail-margin mt-2">
+                  <div class="align-self-center align-self-md-start mb-1">
+                  ${this.fav == "2" ? html`<strong class="badge badge-pill bg-green text-white">已入库</strong>` : nothing }
+                  </div>  
+                  <h1 class="align-self-center align-self-md-start display-6 text-center">
                     <strong>${this.media_info.title ?? this._render_placeholder("200px")}</strong>
                     <strong class="h1" ?hidden=${!this.media_info.year}>(${this.media_info.year})</strong>
                   </h1>
-                  <div class="align-self-center align-self-md-start">
-                    <a href="${this.media_info.link}" target="_blank" ?hidden=${!this.media_info.tmdbid}><span class="badge badge-outline text-green">${this.media_info.tmdbid}</span></a>
-                    <a href="${this.media_info.douban_link}" target="_blank" ?hidden=${!this.media_info.douban_id}><span class="badge badge-outline text-orange">${this.media_info.douban_id}</span></a>
-                    <span class="ms-1" ?hidden=${!this.media_info.runtime}>${this.media_info.runtime}</span>
-                    <span ?hidden=${!this.media_info.genres}>| ${this.media_info.genres}</span>
+                  <div class="align-self-center align-self-md-start text-center">
+                    <span class="h3 ms-1" ?hidden=${!this.media_info.runtime}>${this.media_info.runtime}</span>
+                    <span class="h3" ?hidden=${!this.media_info.genres}>| ${this.media_info.genres}</span>
+                    <span class="h3" ?hidden=${!this.seasons_data.length}>| 共 ${this.seasons_data.length} 季</span>
+                    <span class="h3" ?hidden=${!this.media_info.link}>| TMDB: <a href="${this.media_info.link}" target="_blank">${this.media_info.tmdbid}</a></span>
+                    <span class="h3" ?hidden=${!this.media_info.douban_link}>| 豆瓣: <a href="${this.media_info.douban_link}" target="_blank">${this.media_info.douban_id}</a>
                     ${Object.keys(this.media_info).length === 0 ? this._render_placeholder("205px") : nothing }
                   </div>
-                  <div class="align-self-center align-self-md-start me-1 mt-2">
+                  <div class="align-self-center align-self-md-start text-center mt-1">
                     ${Object.keys(this.media_info).length !== 0
                     ? html`
-                      <span class="btn btn-primary btn-pill me-1"
+                      <span class="btn btn-primary btn-pill mt-1"
                         @click=${(e) => {
                           e.stopPropagation();
                           media_search(this.tmdbid + "", this.media_info.title, this.media_type);
@@ -126,18 +130,24 @@ export class PageMediainfo extends CustomElement {
                       </span>
                       ${this.fav == "1"
                       ? html`
-                        <span class="btn btn-pill btn-pinterest"
+                        <span class="btn btn-pill btn-pinterest mt-1"
                           @click=${this._loveClick}>
                           <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><line x1="4" y1="7" x2="20" y2="7" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" /></svg>
                           删除订阅
                         </span>`
                       : html`
-                        <span class="btn btn-pill btn-purple"
+                        <span class="btn btn-pill btn-purple mt-1"
                           @click=${this._loveClick}>
                           <svg xmlns="http://www.w3.org/2000/svg" class="icon" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M19.5 12.572l-7.5 7.428l-7.5 -7.428m0 0a5 5 0 1 1 7.5 -6.566a5 5 0 1 1 7.5 6.572" /></svg>
                           添加订阅
                         </span>`
-                      }`
+                      }
+                      ${this.item_url ? html`
+                      <span class="btn btn-pill btn-green mt-1" @click=${this._openItemUrl}>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-device-tv-old" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"></path><path d="M3 7m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z"></path><path d="M16 3l-4 4l-4 -4"></path><path d="M15 7v13"></path><path d="M18 15v.01"></path><path d="M18 12v.01"></path></svg>
+                        在线观看
+                      </span>
+                      ` : nothing }`
                     : html`
                       <span class="me-1">${this._render_placeholder("100px", "30px")}</span>
                       <span class="me-1">${this._render_placeholder("100px", "30px")}</span>
@@ -153,11 +163,11 @@ export class PageMediainfo extends CustomElement {
           </div>
         </div>
         <div class="row">
-          <div class="col-lg-8">
+          <div class="col-lg-9">
             <h2 class="text-muted ms-4 me-2">
               <small>${this.media_info.overview ?? this._render_placeholder("200px", "", "col-12", 7)}</small>
             </h2>
-            <div class="row mx-2 mt-4">
+            <div class="row mx-2 mt-4 d-none d-md-flex">
               ${this.media_info.crews
               ? this.media_info.crews.map((item, index) => ( html`
                 <div class="col-12 col-md-6 col-lg-4">
@@ -171,11 +181,17 @@ export class PageMediainfo extends CustomElement {
                 `) )
               : nothing }
             </div>
+            <accordion-seasons
+              .seasons_data=${this.seasons_data}
+              .tmdbid=${this.tmdbid}
+              .title=${this.media_info.title}
+              .year=${this.media_info.year}
+            ></accordion-seasons>
           </div>
-          <div class="col-lg-4">
+          <div class="col-lg-3">
             ${this.media_info.fact
             ? html`
-              <div class="ms-3 me-2 mt-1">
+              <div class="ms-2 me-2 mt-1">
                 <div class="card rounded-3" style="background: none">
                   ${this.media_info.fact.map((item) => ( html`
                     <div class="card-body p-2">
@@ -235,7 +251,7 @@ export class PageMediainfo extends CustomElement {
                 card-tmdbid=${item.id}
                 card-mediatype=${item.type}
                 card-showsub=1
-                card-image=${item.image}
+                card-image=${'/img?url='+this._fix_card_image_url(item.image)}
                 card-fav=${item.fav}
                 card-vote=${item.vote}
                 card-year=${item.year}
@@ -264,7 +280,7 @@ export class PageMediainfo extends CustomElement {
                 card-tmdbid=${item.id}
                 card-mediatype=${item.type}
                 card-showsub=1
-                card-image=${item.image}
+                card-image=${'/img?url='+this._fix_card_image_url(item.image)}
                 card-fav=${item.fav}
                 card-vote=${item.vote}
                 card-year=${item.year}
@@ -297,8 +313,9 @@ export class PageMediainfo extends CustomElement {
         this._update_fav_data();
       });
   }
-
-
+  _openItemUrl(){
+    window.open(this.item_url, '_blank');
+  }
 }
 
 

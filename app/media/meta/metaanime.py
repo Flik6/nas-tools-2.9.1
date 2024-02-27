@@ -5,6 +5,7 @@ import zhconv
 import anitopy
 from app.media.meta._base import MetaBase
 from app.media.meta.release_groups import ReleaseGroupsMatcher
+from app.media.meta.customization import CustomizationMatcher
 from app.utils import StringUtils, ExceptionUtils
 from app.utils.types import MediaType
 
@@ -13,11 +14,28 @@ class MetaAnime(MetaBase):
     """
     识别动漫
     """
-    _anime_no_words = ['CHS&CHT', 'MP4', 'GB MP4', 'WEB-DL']
+    _anime_no_words = ['CHS&CHT', 'MP4', 'GB MP4', 'WEB-DL', 'AT-X', 'ADN', 'HDRip']
     _name_nostring_re = r"S\d{2}\s*-\s*S\d{2}|S\d{2}|\s+S\d{1,2}|EP?\d{2,4}\s*-\s*EP?\d{2,4}|EP?\d{2,4}|\s+EP?\d{1,4}"
 
-    def __init__(self, title, subtitle=None, fileflag=False):
-        super().__init__(title, subtitle, fileflag)
+    def __init__(self,
+                 title,
+                 subtitle=None,
+                 fileflag=False,
+                 filePath=None,
+                 media_type=None,
+                 cn_name=None,
+                 en_name=None,
+                 tmdb_id=None,
+                 imdb_id=None):
+        super().__init__(title,
+                         subtitle,
+                         fileflag,
+                         filePath,
+                         media_type,
+                         cn_name,
+                         en_name,
+                         tmdb_id,
+                         imdb_id)
         if not title:
             return
         # 调用第三方模块识别动漫
@@ -33,13 +51,12 @@ class MetaAnime(MetaBase):
                 if name and name.find("/") != -1:
                     name = name.split("/")[-1].strip()
                 if not name or name in self._anime_no_words or (len(name) < 5 and not StringUtils.is_chinese(name)):
-                    anitopy_info = anitopy.parse("[ANIME]" + title)
-                    if anitopy_info:
-                        name = anitopy_info.get("anime_title")
-                if not name or name in self._anime_no_words or (len(name) < 5 and not StringUtils.is_chinese(name)):
-                    name_match = re.search(r'\[(.+?)]', title)
-                    if name_match and name_match.group(1):
-                        name = name_match.group(1).strip()
+                    # 普遍上第一个非字幕组的 `[]` 中内容为标题
+                    name_match = re.findall(r'\[(.+?)]', title)
+                    for item in name_match:
+                        if not ReleaseGroupsMatcher().match(title=f'[{item}]'):
+                            name = item
+                            break
                 # 拆份中英文名称
                 if name:
                     lastword_type = ""
@@ -144,8 +161,10 @@ class MetaAnime(MetaBase):
                         self.resource_pix = str(self.resource_pix) + "p"
                 # 制作组/字幕组
                 self.resource_team = \
-                    anitopy_info_origin.get("release_group") or \
-                    ReleaseGroupsMatcher().match(title=original_title) or None
+                    ReleaseGroupsMatcher().match(title=original_title) or \
+                    anitopy_info_origin.get("release_group") or None
+                # 自定义占位符
+                self.customization = CustomizationMatcher().match(title=original_title) or None
                 # 视频编码
                 self.video_encode = anitopy_info.get("video_term")
                 if isinstance(self.video_encode, list):
@@ -170,8 +189,9 @@ class MetaAnime(MetaBase):
         """
         if not title:
             return title
-        # 所有【】换成[]
+        # 符号替换
         title = title.replace("【", "[").replace("】", "]").strip()
+        title = title.replace("／", "/")
         # 截掉xx番剧漫
         match = re.search(r"新番|月?番|[日美国][漫剧]", title)
         if match and match.span()[1] < len(title) - 1:

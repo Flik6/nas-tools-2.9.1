@@ -4,18 +4,16 @@ from time import sleep
 
 import zhconv
 
-from app.utils.commons import singleton
-from app.utils import ExceptionUtils, StringUtils
-
 import log
-from config import Config
 from app.media.doubanapi import DoubanApi, DoubanWeb
 from app.media.meta import MetaInfo
+from app.utils import ExceptionUtils, StringUtils
 from app.utils import RequestUtils
+from app.utils.commons import singleton
 from app.utils.types import MediaType
 
 lock = Lock()
-
+prefer_webp = True
 
 @singleton
 class DouBan:
@@ -32,18 +30,13 @@ class DouBan:
     def init_config(self):
         self.doubanapi = DoubanApi()
         self.doubanweb = DoubanWeb()
-        douban = Config().get_config('douban')
-        if douban:
-            # Cookie
-            self.cookie = douban.get('cookie')
-            if not self.cookie:
-                try:
-                    res = RequestUtils(timeout=5).get_res("https://www.douban.com/")
-                    if res:
-                        self.cookie = StringUtils.str_from_cookiejar(res.cookies)
-                except Exception as err:
-                    ExceptionUtils.exception_traceback(err)
-                    log.warn(f"【Douban】获取cookie失败：{format(err)}")
+        try:
+            res = RequestUtils(referer="https://www.douban.com", timeout=5).get_res("https://www.douban.com/")
+            if res:
+                self.cookie = StringUtils.str_from_cookiejar(res.cookies)
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+            log.warn(f"【Douban】获取cookie失败：{format(err)}")
 
     def get_douban_detail(self, doubanid, mtype=None, wait=False):
         """
@@ -52,7 +45,7 @@ class DouBan:
         log.info("【Douban】正在通过API查询豆瓣详情：%s" % doubanid)
         # 随机休眠
         if wait:
-            time = round(random.uniform(1, 5), 1)
+            time = round(random.uniform(10, 60), 1)
             log.info("【Douban】随机休眠：%s 秒" % time)
             sleep(time)
         if mtype == MediaType.MOVIE:
@@ -131,6 +124,29 @@ class DouBan:
                 douban_info["directors"] = celebrities.get("directors")
                 douban_info["actors"] = celebrities.get("actors")
             return douban_info
+
+    def get_latest_douban_interests(self, dtype, userid, wait=False):
+        """
+        获取最新动态中的想看/在看/看过数据
+        """
+        if wait:
+            time = round(random.uniform(1, 5), 1)
+            log.info("【Douban】随机休眠：%s 秒" % time)
+            sleep(time)
+        if dtype == "do":
+            web_infos = self.doubanweb.do_in_interests(userid=userid)
+        elif dtype == "collect":
+            web_infos = self.doubanweb.collect_in_interests(userid=userid)
+        elif dtype == "wish":
+            web_infos = self.doubanweb.wish_in_interests(userid=userid)
+        else:
+            web_infos = self.doubanweb.interests(userid=userid)
+        if not web_infos:
+            return []
+        for web_info in web_infos:
+            web_info["id"] = web_info.get("url").split("/")[-2]
+        return web_infos
+
 
     def get_douban_wish(self, dtype, userid, start, wait=False):
         """
@@ -376,10 +392,11 @@ class DouBan:
                                                 tags=tags)
         if not infos:
             return []
-        return self.__dict_items(infos.get("items"))
+        return self.__dict_items(infos.get("items"), poster_filter=True)
 
     @staticmethod
-    def __dict_items(infos, media_type=None):
+    def __dict_items(infos, media_type=None, poster_filter=False):
+        
         """
         转化为字典
         """
@@ -426,7 +443,16 @@ class DouBan:
 
             # 高清海报
             if poster_path:
+                if poster_filter and ("movie_large.jpg" in poster_path
+                                      or "tv_normal.png" in poster_path):
+                    continue
                 poster_path = poster_path.replace("s_ratio_poster", "m_ratio_poster")
+            elif poster_filter:
+                continue
+            
+            # prefer webp format
+            if prefer_webp:
+                poster_path = poster_path.replace("jpg", "webp")
 
             ret_infos.append({
                 'id': "DB:%s" % rid,

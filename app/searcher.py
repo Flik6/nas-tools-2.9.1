@@ -1,14 +1,17 @@
 import log
 from app.helper import DbHelper
 from app.indexer import Indexer
+from app.plugins import EventManager
+from app.utils.commons import singleton
 from config import Config
 from app.message import Message
 from app.downloader import Downloader
 from app.media import Media
 from app.helper import ProgressHelper
-from app.utils.types import SearchType
+from app.utils.types import SearchType, EventType, ProgressKey
 
 
+@singleton
 class Searcher:
     downloader = None
     media = None
@@ -16,19 +19,21 @@ class Searcher:
     indexer = None
     progress = None
     dbhelper = None
+    eventmanager = None
 
     _search_auto = True
 
     def __init__(self):
+        self.init_config()
+
+    def init_config(self):
         self.downloader = Downloader()
         self.media = Media()
         self.message = Message()
         self.progress = ProgressHelper()
         self.dbhelper = DbHelper()
         self.indexer = Indexer()
-        self.init_config()
-
-    def init_config(self):
+        self.eventmanager = EventManager()
         self._search_auto = Config().get_config("pt").get('search_auto', True)
 
     def search_medias(self,
@@ -38,7 +43,7 @@ class Searcher:
                       in_from: SearchType = None):
         """
         根据关键字调用索引器检查媒体
-        :param key_word: 检索的关键字，不能为空
+        :param key_word: 搜索的关键字，不能为空
         :param filter_args: 过滤条件
         :param match_media: 区配的媒体信息
         :param in_from: 搜索渠道
@@ -48,6 +53,13 @@ class Searcher:
             return []
         if not self.indexer:
             return []
+        # 触发事件
+        self.eventmanager.send_event(EventType.SearchStart, {
+            "key_word": key_word,
+            "media_info": match_media.to_dict() if match_media else None,
+            "filter_args": filter_args,
+            "search_type": in_from.value if in_from else None
+        })
         return self.indexer.search_by_keyword(key_word=key_word,
                                               filter_args=filter_args,
                                               match_media=match_media,
@@ -60,11 +72,11 @@ class Searcher:
                          filters: dict = None,
                          user_name=None):
         """
-        只检索和下载一个资源，用于精确检索下载，由微信、Telegram或豆瓣调用
+        只搜索和下载一个资源，用于精确搜索下载，由微信、Telegram或豆瓣调用
         :param media_info: 已识别的媒体信息
         :param in_from: 搜索渠道
         :param no_exists: 缺失的剧集清单
-        :param sites: 检索哪些站点
+        :param sites: 搜索哪些站点
         :param filters: 过滤条件，为空则不过滤
         :param user_name: 用户名
         :return: 请求的资源是否全部下载完整，如完整则返回媒体信息
@@ -75,7 +87,7 @@ class Searcher:
         if not media_info:
             return None, {}, 0, 0
         # 进度计数重置
-        self.progress.start('search')
+        self.progress.start(ProgressKey.Search)
         # 查找的季
         if media_info.begin_season is None:
             search_season = None
@@ -112,8 +124,8 @@ class Searcher:
                 if media_info.original_language == "en":
                     search_en_name = media_info.original_title
                 else:
-                    # 此处使用独立对象，避免影响TMDB语言
-                    en_title = Media().get_tmdb_en_title(media_info)
+                    # 获取英文标题
+                    en_title = self.media.get_tmdb_en_title(media_info)
                     if en_title:
                         search_en_name = en_title
             # 两次搜索名称
@@ -129,7 +141,7 @@ class Searcher:
                 if search_en_name:
                     second_search_name = search_en_name
         # 开始搜索
-        log.info("【Searcher】开始检索 %s ..." % first_search_name)
+        log.info("【Searcher】开始搜索 %s ..." % first_search_name)
         media_list = self.search_medias(key_word=first_search_name,
                                         filter_args=filter_args,
                                         match_media=media_info,
@@ -138,7 +150,7 @@ class Searcher:
         if len(media_list) == 0 \
                 and second_search_name \
                 and second_search_name != first_search_name:
-            log.info("【Searcher】%s 未检索到资源,尝试通过 %s 重新检索 ..." % (first_search_name, second_search_name))
+            log.info("【Searcher】%s 未搜索到资源,尝试通过 %s 重新搜索 ..." % (first_search_name, second_search_name))
             media_list = self.search_medias(key_word=second_search_name,
                                             filter_args=filter_args,
                                             match_media=media_info,
@@ -150,7 +162,7 @@ class Searcher:
         else:
             if in_from in self.message.get_search_types():
                 # 保存搜索记录
-                self.dbhelper.delete_all_search_torrents()
+                self.delete_all_search_torrents()
                 # 搜索结果排序
                 media_list = sorted(media_list, key=lambda x: "%s%s%s%s" % (str(x.title).ljust(100, ' '),
                                                                             str(x.res_order).rjust(3, '0'),
@@ -158,7 +170,7 @@ class Searcher:
                                                                             str(x.seeders).rjust(10, '0')),
                                     reverse=True)
                 # 插入数据库
-                self.dbhelper.insert_search_results(media_list)
+                self.insert_search_results(media_list)
                 # 微信未开自动下载时返回
                 if not self._search_auto:
                     return None, no_exists, len(media_list), None
@@ -179,3 +191,33 @@ class Searcher:
                 # 全部下完了
                 else:
                     return download_items[0], no_exists, len(media_list), len(download_items)
+
+    def get_search_result_by_id(self, dl_id):
+        """
+        根据下载ID获取搜索结果
+        :param dl_id: 下载ID
+        :return: 搜索结果
+        """
+        return self.dbhelper.get_search_result_by_id(dl_id)
+
+    def get_search_results(self):
+        """
+        获取搜索结果
+        :return: 搜索结果
+        """
+        return self.dbhelper.get_search_results()
+
+    def delete_all_search_torrents(self):
+        """
+        删除所有搜索结果
+        """
+        self.dbhelper.delete_all_search_torrents()
+
+    def insert_search_results(self, media_items: list, title=None, ident_flag=True):
+        """
+        插入搜索结果
+        :param media_items: 搜索结果
+        :param title: 搜索标题
+        :param ident_flag: 是否标识
+        """
+        self.dbhelper.insert_search_results(media_items, title, ident_flag)
